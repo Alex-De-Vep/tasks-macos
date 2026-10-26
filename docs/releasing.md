@@ -25,8 +25,8 @@ python3 scripts/build_release.py
 
 Вложите только:
 
-- `Задачи-0.1.32-macOS-universal.dmg`;
-- `Задачи-0.1.32-macOS-universal.dmg.sha256`.
+- `Tasks-0.1.32-macOS-universal.dmg`;
+- `Tasks-0.1.32-macOS-universal.dmg.sha256`.
 
 Текст выпуска берите из соответствующего файла в `docs/releases/`. Исходные архивы GitHub создаст из тега; бинарные сборки не следует коммитить в Git. Не заменяйте опубликованный тег другим коммитом — для исправлений выпускайте новую версию.
 
@@ -35,7 +35,7 @@ python3 scripts/build_release.py
 После скачивания DMG и файла контрольной суммы в одну папку:
 
 ```sh
-shasum -a 256 -c Задачи-0.1.32-macOS-universal.dmg.sha256
+shasum -a 256 -c Tasks-0.1.32-macOS-universal.dmg.sha256
 ```
 
 Контрольная сумма проверяет целостность файла, но не заменяет подпись Developer ID или нотариализацию.

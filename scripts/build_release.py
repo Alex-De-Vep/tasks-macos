@@ -107,7 +107,7 @@ def main():
             encoding="utf-8")
 
         # Проверяем временный образ, а готовый файл заменяем только после успешной проверки.
-        image = work / f"Задачи-{version}-macOS-universal.dmg"
+        image = work / f"Tasks-{version}-macOS-universal.dmg"
         run("/usr/bin/hdiutil", "create", "-volname", "Задачи", "-srcfolder", stage,
             "-format", "UDZO", "-fs", "HFS+", image)
         run("/usr/bin/hdiutil", "verify", image)
