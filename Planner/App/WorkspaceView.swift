@@ -1,0 +1,231 @@
+import SwiftUI
+import SwiftData
+
+struct WorkspaceView: View {
+    @Environment(\.translations) private var strings
+    @Query(sort: \TaskFolder.sortOrder) private var folders: [TaskFolder]
+    @Query(sort: \PlannerTask.createdAt, order: .reverse) private var tasks: [PlannerTask]
+    @Environment(\.scenePhase) private var scenePhase
+    @Bindable var service: TaskService
+    let calendar: CalendarService
+    @Bindable var preferences: AppPreferences
+    @Bindable var notifications: PlannerNotifications
+    @Query private var eventLinks: [TaskEventLink]
+    @State private var calendarState = CalendarPanelState()
+    @State private var editorStore = TaskEditorStore()
+    @State private var state = WorkspaceState()
+    @State private var isSidebarVisible = true
+    @State private var isFullScreen = false
+    @State private var now = Date.now
+    @State private var editingFolder: TaskFolder?
+    @State private var showFolderEditor = false
+    @State private var deletingFolder: TaskFolder?
+    @State private var deletingTask: PlannerTask?
+    @State private var checklistFocusID: UUID?
+
+    private var filter: TaskFilter { state.filter ?? .inbox }
+    private var taskList: TaskListSnapshot {
+        TaskListSnapshot(tasks: tasks, filter: filter, search: state.search, now: now)
+    }
+    private var selectedTask: PlannerTask? { tasks.first { $0.id == state.selectedTaskID } }
+
+    // Запись через эти привязки сразу обновляет все связанные значения, без цепочки onChange.
+    private var filterSelection: Binding<TaskFilter?> {
+        Binding(get: { state.filter }, set: { if let filter = $0 { selectFilter(filter) } })
+    }
+
+    private var taskSelection: Binding<UUID?> {
+        Binding(get: { state.selectedTaskID }, set: { state.selectTask($0) })
+    }
+
+    private var searchText: Binding<String> {
+        Binding(get: { state.search }, set: { search in
+            let snapshot = TaskListSnapshot(tasks: tasks, filter: filter, search: search, now: now)
+            state.updateSearch(search, visibleIDs: snapshot.taskIDs)
+        })
+    }
+
+    var body: some View {
+        workspaceWithDialogs
+            // В полном экране AppKit рисует фон, верхний отступ панелей и нижнюю границу toolbar.
+            .toolbarBackgroundVisibility(isFullScreen ? .visible : .hidden, for: .windowToolbar)
+            // Учитываем внешние изменения библиотеки и смену дня, не сбрасывая существующий выбор.
+            .onChange(of: taskList.taskIDs) { previousIDs, visibleIDs in
+                state.reconcileSelection(previousIDs: previousIDs, visibleIDs: visibleIDs)
+            }
+            .onChange(of: folders.map(\.id)) {
+                if case .folder(let id) = filter, !folders.contains(where: { $0.id == id }) { selectFilter(.inbox) }
+            }
+            .onChange(of: state.selectedTaskID) { checklistFocusID = nil }
+            // «Сегодня» пересчитывается при полуночи, смене часового пояса и возврате в приложение.
+            .onChange(of: scenePhase) { if scenePhase == .active { now = .now } }
+            .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in now = .now }
+            .onReceive(NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange)) { _ in now = .now }
+            .onChange(of: notifications.openRevision) { openNotificationTask() }
+            .onAppear { openNotificationTask() }
+            .task(id: calendar.revision) {
+                for link in eventLinks {
+                    if let event = calendar.resolve(identifier: link.eventIdentifier, externalIdentifier: link.externalIdentifier) {
+                        service.refreshLink(link, event: event)
+                    }
+                }
+            }
+    }
+
+    /// Три системные колонки macOS: папки, список и открытая задача.
+    private var splitView: some View {
+        NativeWorkspaceSplitView(
+            isSidebarVisible: $isSidebarVisible,
+            isFullScreen: $isFullScreen,
+            isCalendarVisible: $preferences.calendarOpen,
+            calendarWidth: $preferences.calendarWidth,
+            search: searchText,
+            searchTitle: strings["Поиск"],
+            clearSearchTitle: strings["Очистить поиск"],
+            calendarTitle: strings[preferences.calendarOpen ? "Закрыть календарь" : "Открыть календарь"],
+            calendarHeadingTitle: strings["Календарь"],
+            newFolderTitle: strings["Новая папка"],
+            toggleSidebarTitle: strings[isSidebarVisible ? "Скрыть папки" : "Показать папки"],
+            folderTitle: filter.title(in: folders, using: strings),
+            taskCountTitle: strings.format("Задач: %d", taskList.tasks.count),
+            newTaskTitle: strings["Новая задача"],
+            newChecklistItemTitle: strings["Добавить подзадачу"],
+            taskActionsTitle: strings["Действия с задачей"],
+            deadlineTitle: strings["Срок задачи"],
+            hasSelectedTask: selectedTask != nil,
+            newFolder: newFolder,
+            newTask: newTask,
+            newChecklistItem: { addChecklistItem(after: nil) }
+        ) {
+            SidebarView(selection: filterSelection, folders: folders, tasks: tasks, now: now, renameFolder: { folder in
+                editingFolder = folder; showFolderEditor = true
+            }, deleteFolder: { deletingFolder = $0 })
+        } tasks: {
+            TaskListView(selectedID: taskSelection, search: state.search, filter: filter, snapshot: taskList, now: now,
+                         create: newTask, toggleToday: toggleToday, toggleCompleted: { service.toggleCompleted($0) },
+                         delete: { deletingTask = $0 }, deleteImmediately: deleteTask)
+        } detail: {
+            if let task = selectedTask {
+                TaskDetailView(task: task, service: service, now: now, focusTitle: task.id == state.createdTaskID,
+                    toggleToday: { toggleToday(task) }, editorStore: editorStore, calendar: calendar, openEvent: openEvent,
+                    checklistFocusID: checklistFocusID, addChecklistItem: addChecklistItem)
+            } else {
+                ContentUnavailableView(strings["Выберите задачу"], systemImage: "square.and.pencil", description: Text(strings["Откройте задачу из списка или создайте новую."]))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(PlannerStyle.paper)
+            }
+        } taskActions: {
+            if let task = selectedTask {
+                TaskActionsMenu(task: task, folders: folders, service: service, delete: { deletingTask = task })
+            }
+        } deadline: {
+            if let task = selectedTask {
+                TaskDeadlineToolbarButton(task: task, service: service).id(task.id)
+            }
+        } calendarContent: {
+            CalendarPanel(state: calendarState, preferences: preferences, service: calendar, taskService: service,
+                          selectedTask: selectedTask, tasks: tasks, links: eventLinks,
+                          openTask: { state.openLinkedTask($0, visibleIDs: taskList.taskIDs) },
+                          isVisible: preferences.calendarOpen)
+        }
+        // Корневая split view занимает всю высоту окна; safe area учитывается внутри нативных колонок.
+        .ignoresSafeArea(.container, edges: .top)
+        .tint(PlannerStyle.accent)
+        .frame(minWidth: 900, minHeight: 560)
+        .focusedSceneValue(\.plannerActions, PlannerActions(newTask: newTask, newFolder: newFolder, toggleToday: {
+            if let task = selectedTask { toggleToday(task) }
+        }, toggleCompleted: {
+            if let task = selectedTask { service.toggleCompleted(task) }
+        }, hasSelection: selectedTask != nil))
+    }
+
+    /// Диалоги вынесены отдельно: основной экран остаётся читаемым и быстро компилируется.
+    private var workspaceWithDialogs: some View {
+        splitView
+        .sheet(isPresented: $showFolderEditor) {
+            FolderEditor(folder: editingFolder, service: service) { folder in selectFilter(.folder(folder.id)) }
+        }
+        .alert(strings["Не удалось сохранить"], isPresented: Binding(get: { service.error != nil }, set: { if !$0 { service.error = nil } })) {
+            Button(strings["Понятно"], role: .cancel) { service.error = nil }
+        } message: { Text(service.error?.message ?? "") }
+        .alert(strings["Удалить папку?"], isPresented: Binding(get: { deletingFolder != nil }, set: { if !$0 { deletingFolder = nil } })) {
+            Button(strings["Удалить папку"], role: .destructive) {
+                if let folder = deletingFolder, service.deleteFolder(folder) { selectFilter(.inbox) }
+                deletingFolder = nil
+            }
+            Button(strings["Отмена"], role: .cancel) { deletingFolder = nil }
+        } message: { Text(strings["Задачи из этой папки останутся во «Входящих»."]) }
+        .alert(strings["Удалить задачу?"], isPresented: Binding(get: { deletingTask != nil }, set: { if !$0 { deletingTask = nil } })) {
+            Button(strings["Удалить"], role: .destructive) {
+                if let task = deletingTask { deleteTask(task) }
+                deletingTask = nil
+            }
+            Button(strings["Отмена"], role: .cancel) { deletingTask = nil }
+        } message: { Text(strings["Задача будет удалена с этого Mac."]) }
+    }
+
+    private func openNotificationTask() {
+        guard let id = notifications.taskToOpen, let task = tasks.first(where: { $0.id == id }) else { return }
+        state.openLinkedTask(task, visibleIDs: taskList.taskIDs)
+        notifications.taskToOpen = nil
+    }
+
+    private func deleteTask(_ task: PlannerTask) {
+        let id = task.id
+        let snapshot = taskList
+        // Сохраняем идентификаторы до удаления модели, отдельно для двух областей списка.
+        let activeIDs = snapshot.activeTasks.map(\.id)
+        let completedIDs = snapshot.completedTasks.map(\.id)
+        withImmediateNavigationUpdate {
+            if service.delete(task) {
+                editorStore.remove(taskID: id)
+                state.selectAfterDeletingTask(id, previousActiveIDs: activeIDs, previousCompletedIDs: completedIDs)
+            }
+        }
+    }
+
+    private func newTask() {
+        withImmediateNavigationUpdate {
+            if let task = service.createTask(in: filter, folders: folders) {
+                state.selectCreatedTask(task.id)
+            }
+        }
+    }
+
+    private func selectFilter(_ filter: TaskFilter) {
+        let snapshot = TaskListSnapshot(tasks: tasks, filter: filter, now: now)
+        state.selectFilter(filter, visibleIDs: snapshot.taskIDs)
+    }
+
+    private func toggleToday(_ task: PlannerTask) {
+        let previousIDs = taskList.taskIDs
+        withImmediateNavigationUpdate {
+            service.toggleToday(task)
+            // Та же транзакция сохраняет выбор либо переводит его на соседа, если строка исчезла.
+            state.reconcileSelection(previousIDs: previousIDs, visibleIDs: taskList.taskIDs)
+        }
+    }
+
+    private func newFolder() {
+        editingFolder = nil
+        showFolderEditor = true
+    }
+
+    private func addChecklistItem(after previous: TaskChecklistItem?) {
+        guard let task = selectedTask, let item = service.addChecklistItem(to: task, after: previous) else { return }
+        checklistFocusID = item.id
+    }
+
+    private func openEvent(_ link: TaskEventLink) {
+        preferences.calendarOpen = true
+        calendarState.select(link.lastStart)
+        if let event = calendar.resolve(identifier: link.eventIdentifier, externalIdentifier: link.externalIdentifier) {
+            service.refreshLink(link, event: event)
+            calendarState.show(event)
+        } else {
+            calendarState.message = calendar.access == .full
+                ? "Событие больше недоступно. Возможно, оно удалено или перемещено."
+                : "Нет доступа к календарям."
+        }
+    }
+}

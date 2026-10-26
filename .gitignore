@@ -1,0 +1,35 @@
+# Результаты сборки, пакеты и локальные визуальные проверки
+.build/
+dist/
+build/
+DerivedData/
+*.xcresult
+*.log
+__pycache__/
+*.pyc
+
+# Личные настройки Xcode и macOS
+Packages/**/.swiftpm/
+*.xcuserstate
+xcuserdata/
+.DS_Store
+
+# Подпись и локальные секреты
+.env
+.env.*
+!.env.example
+*.p12
+*.p8
+*.key
+*.pem
+*.mobileprovision
+*.provisionprofile
+
+# Пользовательские библиотеки не должны попадать в исходники
+*.store
+*.store-shm
+*.store-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3

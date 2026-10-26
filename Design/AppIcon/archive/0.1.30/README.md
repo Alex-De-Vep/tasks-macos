@@ -1,0 +1,7 @@
+# Иконка «Задачи»
+
+Оригинал: `tasks-icon.png`. Создан встроенным инструментом imagegen; фон прозрачный. Размеры для macOS собраны скриптом `scripts/prepare_app_icon.py` в `Planner/Assets.xcassets/AppIcon.appiconset`. Повторный запуск скрипта обновляет только подготовленные размеры, оригинал сохраняется.
+
+Промпт генерации:
+
+> Use case: logo-brand. Create one finished macOS app icon for a native task planner named Tasks (Задачи), but include NO text or letters. Square 1024x1024 composition on genuinely transparent background, ready to install in an Xcode AppIcon asset catalog. A single large rounded-square purple tile, centered, occupying 85% of the canvas with equal transparent padding on all sides. Calm refined Apple-like desktop icon craft, restrained soft depth, almost front-on, exceptionally crisp contours, clean and legible at small sizes. Main tile is rich soft violet #7650B5 with a subtle lighter lilac top edge, not neon. Inside the tile, a centered ivory checklist sheet with rounded corners, two short subtly purple horizontal task lines and a prominent bold violet completion checkmark integrated into the sheet. Minimal number of shapes, confident proportions, balanced whitespace, polished but not ornate. The checklist must read unmistakably as tasks rather than calendar or email. Keep the symbol large and simple. Tiny soft shadow directly under the tile only, no surrounding scene, no device mockup, no border around the canvas, no watermark, no tiny details, no yellow.

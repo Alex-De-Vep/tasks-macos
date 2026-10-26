@@ -1,0 +1,11 @@
+# Иконка «Задачи»
+
+Основная иконка с версии 0.1.31: минималистичный список из двух строк — галочка и незаполненный кружок на фиолетовом фоне. Выбрана пользователем 27 октября 2026 года; источник — приложенный файл «Изображение ChatGPT 27 окт. 2026 г., 00_16_13.png».
+
+Оригинал: `tasks-icon.png`, создан встроенным инструментом imagegen; фон прозрачный. Выбранное изображение сохранено без изменений. Скрипт `scripts/prepare_app_icon.py` подготавливает стандартные размеры для macOS в `Planner/Assets.xcassets/AppIcon.appiconset`, меняя только разрешение.
+
+Предыдущая иконка и её описание сохранены в `archive/0.1.30/`.
+
+Промпт генерации:
+
+> Use case: logo-brand. Asset type: a single redesigned macOS app icon for a task planner named Задачи. Reference image role: the CENTER purple task icon is the redesign target; the yellow Notes and blue Mail icons on its sides are visual references for restraint and native macOS proportions. Produce only ONE new icon, not the screenshot, not a dock, not a comparison sheet. Retain the visual identity of a calm purple productivity app but simplify dramatically. Front-facing orthographic icon, native macOS continuous rounded-square silhouette, centered with about 10% transparent margin on all sides. Smooth carefully drawn geometry, generous negative space, legible at tiny dock sizes. Very subtle native soft material and top-edge light, barely perceptible depth, no inflated glossy plastic, no thick bevel, no extra decoration. No text, no letters, no numbers, no watermarks. Outside the icon is true transparent alpha. Variant 3: a rich violet rounded-square tile with a compact minimal WHITE CHECKLIST glyph placed directly on it, no paper card underneath. Glyph consists of exactly TWO rows: upper row has one small white checkmark at left and a short white horizontal rounded stroke to its right; lower row has one small white circular outline at left and a short white horizontal rounded stroke to its right. Cohesive stroke weight, precise alignment, quiet generous spacing. Entire glyph fits in the central 52% of the tile, leaving ample breathing room. Subtle lavender-violet to purple tile shading. Minimal useful task-list symbol, no additional rows or decorations.

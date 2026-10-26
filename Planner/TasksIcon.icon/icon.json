@@ -1,0 +1,38 @@
+{
+  "fill": {
+    "linear-gradient": [
+      "srgb:0.55,0.25,1,1",
+      "srgb:0.34,0.06,0.9,1"
+    ]
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "image-name": "tasks-icon.png",
+          "name": "Tasks",
+          "glass": false,
+          "position": {
+            "scale": 1.27,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0
+      },
+      "specular": false,
+      "translucency": {
+        "enabled": false,
+        "value": 0
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  }
+}
