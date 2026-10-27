@@ -5,6 +5,11 @@
     <key>UTExportedTypeDeclarations</key>
     <array>
         <dict>
+            <key>UTTypeIdentifier</key><string>local.planner.task</string>
+            <key>UTTypeDescription</key><string>Planner task reference</string>
+            <key>UTTypeConformsTo</key><array><string>public.data</string></array>
+        </dict>
+        <dict>
             <key>UTTypeIdentifier</key><string>local.planner.calendar-event</string>
             <key>UTTypeDescription</key><string>Planner calendar event</string>
             <key>UTTypeConformsTo</key><array><string>public.data</string></array>

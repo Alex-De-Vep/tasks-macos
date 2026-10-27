@@ -1,7 +1,7 @@
 import Foundation
 import PlannerLocalization
 
-/// Период планирования хранится отдельно от отметки «На сегодня» и статуса выполнения.
+/// Значения прежнего планирования сохраняем для совместимости старых библиотек.
 enum PlanningPeriod: String, CaseIterable, Identifiable {
     case week, month
     var id: String { rawValue }
@@ -9,12 +9,22 @@ enum PlanningPeriod: String, CaseIterable, Identifiable {
     var component: Calendar.Component { self == .week ? .weekOfYear : .month }
 }
 
-/// Системные разделы — фильтры над одной библиотекой; копии задач для них не создаются.
+/// Основные папки не пересекаются. «Сегодня» и «Все задачи» — общие представления без копирования.
 enum TaskFilter: Hashable, Identifiable {
     case inbox, today, week, month, all
     case folder(UUID)
 
     static let smartFilters: [TaskFilter] = [.inbox, .today, .week, .month, .all]
+    static let systemFolders: [TaskFilter] = [.inbox, .week, .month]
+
+    var isPrimaryFolder: Bool {
+        switch self {
+        case .inbox, .week, .month, .folder: true
+        case .today, .all: false
+        }
+    }
+    var acceptsTaskDrop: Bool { self != .all }
+    var creationFolder: TaskFilter { isPrimaryFolder ? self : .inbox }
     var id: String {
         switch self {
         case .inbox: "inbox"
@@ -50,20 +60,9 @@ enum TaskFilter: Hashable, Identifiable {
 
     func matches(_ task: PlannerTask, now: Date, calendar: Calendar = .current) -> Bool {
         switch self {
-        case .inbox: return task.folder == nil
         case .today: return task.isFocused(on: now, calendar: calendar)
         case .all: return true
-        case .folder(let id): return task.folder?.id == id
-        case .week, .month:
-            if task.isFocused(on: now, calendar: calendar) { return true }
-            guard let kind = task.planningKind.flatMap(PlanningPeriod.init(rawValue:)),
-                  let anchor = task.planningAnchor,
-                  let planned = calendar.dateInterval(of: kind.component, for: anchor) else { return false }
-            if self == .week && kind != .week { return false }
-            let component: Calendar.Component = self == .week ? .weekOfYear : .month
-            guard let current = calendar.dateInterval(of: component, for: now) else { return false }
-            // Правая граница не включается: соседние недели и месяцы не пересекаются.
-            return planned.start < current.end && current.start < planned.end
+        default: return task.primaryFolder == self
         }
     }
 }
@@ -79,6 +78,15 @@ enum LocalDay {
 }
 
 extension PlannerTask {
+    var primaryFolder: TaskFilter {
+        if let folder { return .folder(folder.id) }
+        switch systemFolderKind {
+        case "week": return .week
+        case "month": return .month
+        default: return .inbox
+        }
+    }
+
     func isFocused(on date: Date, calendar: Calendar = .current) -> Bool {
         focusDay == LocalDay.key(for: date, calendar: calendar)
     }

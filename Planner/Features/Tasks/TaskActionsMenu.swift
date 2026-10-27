@@ -1,28 +1,16 @@
 import SwiftUI
 
-/// Меню открытой задачи в панели инструментов: перенос, планирование и удаление с подтверждением.
+/// Меню открытой задачи: выбор основной папки и удаление с подтверждением.
 struct TaskActionsMenu: View {
     @Environment(\.translations) private var strings
     let task: PlannerTask
     let folders: [TaskFolder]
-    let service: TaskService
+    let move: (TaskFilter) -> Void
     let delete: () -> Void
 
     var body: some View {
         Menu {
-            Menu(strings["Переместить в папку"]) {
-                Button(strings["Входящие"]) { service.move(task, to: nil) }
-                ForEach(folders) { folder in
-                    Button(folder.name) { service.move(task, to: folder) }
-                }
-            }
-            Menu(strings["Запланировать"]) {
-                ForEach(PlanningPeriod.allCases) { period in
-                    Button(period.title(using: strings)) { service.plan(task, for: period) }
-                }
-                Divider()
-                Button(strings["Убрать период"]) { service.plan(task, for: nil) }
-            }
+            TaskMoveMenu(task: task, folders: folders, move: move)
             Divider()
             Button(strings["Удалить задачу…"], role: .destructive, action: delete)
         } label: {

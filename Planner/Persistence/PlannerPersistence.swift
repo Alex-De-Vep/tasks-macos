@@ -3,7 +3,7 @@ import SwiftData
 
 /// Единственная точка настройки SwiftData: локальный файл, версия схемы и первый запуск.
 enum PlannerPersistence {
-    static let schema = Schema(versionedSchema: PlannerSchemaV4.self)
+    static let schema = Schema(versionedSchema: PlannerSchemaV5.self)
 
     static func makeContainer(at url: URL? = nil, inMemory: Bool = false) throws -> ModelContainer {
         let configuration: ModelConfiguration

@@ -27,7 +27,7 @@ final class TaskDeletionUITests: XCTestCase {
         search.typeText(XCUIKeyboardKey.escape.rawValue)
         assertValue("", of: search)
 
-        // Delete удаляет без диалога и переводит выбор к соседней задаче.
+        // Delete удаляет без диалога и закрывает карточку, не выбирая соседа.
         let rowTitle = app.staticTexts["Целевая задача"].firstMatch
         XCTAssertTrue(rowTitle.waitForExistence(timeout: 3))
         rowTitle.click()
@@ -35,7 +35,8 @@ final class TaskDeletionUITests: XCTestCase {
         let removed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: rowTitle)
         XCTAssertEqual(XCTWaiter.wait(for: [removed], timeout: 3), .completed)
         XCTAssertFalse(deletionPrompt(in: app).exists)
-        assertValue("Соседняя задача", of: field("task-title-field", in: app))
+        XCTAssertFalse(field("task-title-field", in: app).exists)
+        XCTAssertTrue(app.staticTexts["Соседняя задача"].firstMatch.exists)
     }
 
     func testForwardDeleteInCompletedList() {
@@ -68,7 +69,7 @@ final class TaskDeletionUITests: XCTestCase {
         // Удаление нижней строки не выбирает следующую за ней выполненную задачу.
         app.staticTexts["Активная старая"].firstMatch.click()
         app.typeText(XCUIKeyboardKey.delete.rawValue)
-        assertValue("Активная новая", of: field("task-title-field", in: app))
+        XCTAssertFalse(field("task-title-field", in: app).exists)
         assertValue("Свернуто", of: disclosure)
         XCTAssertFalse(app.descendants(matching: .any)["completed-task-list"].firstMatch.exists)
 
@@ -83,6 +84,40 @@ final class TaskDeletionUITests: XCTestCase {
         XCTAssertFalse(field("task-title-field", in: app).exists)
         disclosure.click()
         XCTAssertTrue(app.staticTexts["Архивная задача"].firstMatch.waitForExistence(timeout: 3))
+    }
+
+    func testSwitchingFoldersClearsTaskAndCollapsesCompletedList() {
+        let app = launchIsolatedApp()
+        createTask("Архивная задача", in: app)
+        app.buttons["complete-task-button"].click()
+        let disclosure = app.buttons["completed-disclosure-button"]
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 3))
+        assertValue("Развернуто", of: disclosure)
+
+        let week = field("sidebar-week", in: app), inbox = field("sidebar-inbox", in: app)
+        week.click()
+        XCTAssertFalse(field("task-title-field", in: app).exists)
+        createTask("Активная на неделе", in: app)
+
+        // Папка без активных задач не выбирает выполненную и не раскрывает её список.
+        inbox.click()
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 3))
+        assertValue("Свернуто", of: disclosure)
+        XCTAssertFalse(field("completed-task-list", in: app).exists)
+        XCTAssertFalse(field("task-title-field", in: app).exists)
+        disclosure.click()
+        let archived = app.staticTexts["Архивная задача"].firstMatch
+        XCTAssertTrue(archived.waitForExistence(timeout: 3))
+        archived.click()
+        assertValue("Архивная задача", of: field("task-title-field", in: app))
+
+        // Папка с активной задачей также открывается без выбранной карточки.
+        week.click()
+        XCTAssertTrue(app.staticTexts["Активная на неделе"].firstMatch.waitForExistence(timeout: 3))
+        XCTAssertFalse(field("task-title-field", in: app).exists)
+        inbox.click()
+        assertValue("Свернуто", of: disclosure)
+        XCTAssertFalse(field("task-title-field", in: app).exists)
     }
 
     private func launchIsolatedApp() -> XCUIApplication {

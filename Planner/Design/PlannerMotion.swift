@@ -5,12 +5,13 @@ import SwiftUI
 /// Короткие переходы без пружин: управление реагирует сразу, меняется только представление.
 enum PlannerMotion {
     enum Kind {
-        case feedback, content, panel
+        case feedback, content, listChange, panel
 
         var duration: TimeInterval {
             switch self {
             case .feedback: 0.16
             case .content: 0.22
+            case .listChange: 0.26
             case .panel: 0.26
             }
         }

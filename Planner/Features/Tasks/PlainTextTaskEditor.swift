@@ -33,6 +33,8 @@ final class TaskEditorStore {
         let key = taskID.uuidString + (title ? ".title" : ".description")
         if let view = views[key] { return view }
         let view = TaskTextView(frame: .zero)
+        view.isEditable = true
+        view.isSelectable = true
         view.isTitle = title
         view.isRichText = false
         view.importsGraphics = false
@@ -72,10 +74,19 @@ struct PlainTextTaskEditor: NSViewRepresentable {
     var minimumHeight: CGFloat? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
-    func makeNSView(context: Context) -> TaskTextView { store.view(taskID: taskID, title: isTitle) }
-    func updateNSView(_ view: TaskTextView, context: Context) {
+    func makeNSView(context: Context) -> TaskEditorHost {
+        TaskEditorHost(editor: store.view(taskID: taskID, title: isTitle))
+    }
+    func updateNSView(_ host: TaskEditorHost, context: Context) {
+        // Уходящий representable может обновиться после повторного открытия документа.
+        // Только текущий контейнер вправе назначать делегат, данные и запрос фокуса.
+        guard host.ownsEditor else { return }
+        let view = host.editor
+        context.coordinator.host = host
         context.coordinator.changed = { text = $0 }
         view.delegate = context.coordinator
+        view.isEditable = true
+        view.isSelectable = true
         view.submit = submit
         view.toggleCompleted = toggleCompleted
         view.placeholder = placeholder
@@ -86,35 +97,99 @@ struct PlainTextTaskEditor: NSViewRepresentable {
             view.string = text
             view.setSelectedRange(NSRange(location: min(selection.location, (text as NSString).length), length: 0))
             view.invalidateIntrinsicContentSize()
+            host.invalidateIntrinsicContentSize()
         }
         view.needsDisplay = true
-        view.focusRequested = requestFocus
-        view.focusConsumed = { requestFocus = false }
-        if requestFocus { view.applyRequestedFocus() }
+        if requestFocus {
+            view.focusRequested = true
+            view.focusConsumed = { requestFocus = false }
+            view.applyRequestedFocus()
+        } else { view.cancelRequestedFocus() }
     }
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView view: TaskTextView, context: Context) -> CGSize? {
-        view.fittingSize(width: max(1, proposal.width ?? 300),
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView host: TaskEditorHost, context: Context) -> CGSize? {
+        host.editor.fittingSize(width: max(1, proposal.width ?? 300),
                          minimumHeight: minimumHeight ?? (isTitle ? 30 : 160))
     }
+    static func dismantleNSView(_ host: TaskEditorHost, coordinator: Coordinator) {
+        host.detachEditor()
+        coordinator.host = nil
+        coordinator.changed = nil
+    }
     final class Coordinator: NSObject, NSTextViewDelegate {
+        weak var host: TaskEditorHost?
         var changed: ((String) -> Void)?
         func textDidChange(_ notification: Notification) {
-            guard let view = notification.object as? TaskTextView else { return }
+            guard let host, host.ownsEditor, let view = notification.object as? TaskTextView,
+                  view === host.editor else { return }
             view.needsDisplay = true; view.invalidateIntrinsicContentSize()
+            host.invalidateIntrinsicContentSize()
             changed?(view.string)
         }
     }
 }
 
+/// SwiftUI владеет новым контейнером на каждое подключение, а документ — текстом и историей отмены.
+/// Закэшированный NSTextView никогда не возвращается системе как корневой representable повторно.
+final class TaskEditorHost: NSView {
+    let editor: TaskTextView
+    private var editorConstraints: [NSLayoutConstraint] = []
+    var ownsEditor: Bool { editor.editorHost === self && editor.superview === self }
+    override var isFlipped: Bool { true }
+
+    init(editor: TaskTextView) {
+        self.editor = editor
+        super.init(frame: .zero)
+        setAccessibilityElement(false)
+        editor.editorHost?.detachEditor()
+        editor.editorHost = self
+        editor.isEditable = true
+        editor.isSelectable = true
+        editor.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(editor)
+        editorConstraints = [editor.leadingAnchor.constraint(equalTo: leadingAnchor),
+                             editor.trailingAnchor.constraint(equalTo: trailingAnchor),
+                             editor.topAnchor.constraint(equalTo: topAnchor),
+                             editor.bottomAnchor.constraint(equalTo: bottomAnchor)]
+        NSLayoutConstraint.activate(editorConstraints)
+    }
+    required init?(coder: NSCoder) { nil }
+
+    func detachEditor() {
+        // Демонтаж старого контейнера не отключает редактор, уже переданный новому.
+        guard ownsEditor else { return }
+        editor.cancelRequestedFocus()
+        editor.delegate = nil
+        editor.submit = {}
+        editor.toggleCompleted = {}
+        if window?.firstResponder === editor { window?.makeFirstResponder(nil) }
+        NSLayoutConstraint.deactivate(editorConstraints)
+        editorConstraints = []
+        editor.removeFromSuperview()
+        editor.editorHost = nil
+    }
+}
+
 final class TaskTextView: NSTextView {
+    weak var editorHost: TaskEditorHost?
     var isTitle = false
     var placeholder = ""
     var submit: () -> Void = {}
     var toggleCompleted: () -> Void = {}
     var focusRequested = false
     var focusConsumed: () -> Void = {}
+    private var focusGeneration = 0
     private let documentUndo = UndoManager()
     override var undoManager: UndoManager? { documentUndo }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        // Пользовательский клик важнее ранее запланированного автоматического фокуса.
+        let consumed = focusRequested ? focusConsumed : {}
+        cancelRequestedFocus()
+        consumed()
+        window?.makeFirstResponder(self)
+        super.mouseDown(with: event)
+    }
 
     /// Пробные ширины SwiftUI измеряем отдельно, не меняя контейнер живого редактора.
     /// Иначе widthTracksTextView может вернуть прежнюю ширину во время ensureLayout,
@@ -139,10 +214,21 @@ final class TaskTextView: NSTextView {
     }
     func applyRequestedFocus() {
         // Новый NSTextView может получить запрос ещё до присоединения к окну.
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.focusRequested, let window = self.window else { return }
+        focusGeneration += 1
+        let generation = focusGeneration
+        guard let host = editorHost else { return }
+        DispatchQueue.main.async { [weak self, weak host] in
+            guard let self, let host, host.ownsEditor, self.editorHost === host,
+                  self.focusGeneration == generation, self.focusRequested,
+                  let window = self.window else { return }
             if window.makeFirstResponder(self) { self.focusRequested = false; self.focusConsumed() }
         }
+    }
+
+    func cancelRequestedFocus() {
+        focusGeneration += 1
+        focusRequested = false
+        focusConsumed = {}
     }
 
     override func draw(_ dirtyRect: NSRect) {

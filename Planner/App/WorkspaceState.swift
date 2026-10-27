@@ -14,16 +14,21 @@ final class WorkspaceState {
     private(set) var selectedTaskID: UUID?
     private(set) var search = ""
     private(set) var createdTaskID: UUID?
+    private(set) var completedTasksExpanded = false
 
-    func selectFilter(_ filter: TaskFilter, visibleIDs: [UUID]) {
+    func selectFilter(_ filter: TaskFilter) {
         guard self.filter != filter else { return }
         withImmediateNavigationUpdate {
             self.filter = filter
             search = ""
             createdTaskID = nil
-            selectedTaskID = visibleIDs.first
+            // Переход в папку показывает список, а задачу пользователь открывает явно.
+            selectedTaskID = nil
+            completedTasksExpanded = false
         }
     }
+
+    func setCompletedTasksExpanded(_ expanded: Bool) { completedTasksExpanded = expanded }
 
     func updateSearch(_ search: String, visibleIDs: [UUID]) {
         withImmediateNavigationUpdate {
@@ -53,18 +58,26 @@ final class WorkspaceState {
 
     func openLinkedTask(_ task: PlannerTask, visibleIDs: [UUID]) {
         withImmediateNavigationUpdate {
-            if !visibleIDs.contains(task.id) { filter = task.folder.map { .folder($0.id) } ?? .inbox }
+            if !visibleIDs.contains(task.id) { filter = task.primaryFolder }
             search = ""
             createdTaskID = nil
             selectedTaskID = task.id
         }
     }
 
-    /// Удаление не переводит выбор между активными и выполненными задачами и не раскрывает другой список.
-    func selectAfterDeletingTask(_ deletedID: UUID, previousActiveIDs: [UUID], previousCompletedIDs: [UUID]) {
+    /// Удаление открытой задачи закрывает карточку; соседняя задача сама не открывается.
+    func selectAfterDeletingTask(_ deletedID: UUID) {
         guard selectedTaskID == deletedID else { return }
-        let previousIDs = previousActiveIDs.contains(deletedID) ? previousActiveIDs : previousCompletedIDs
-        reconcileSelection(previousIDs: previousIDs, visibleIDs: previousIDs.filter { $0 != deletedID })
+        selectTask(nil)
+        if createdTaskID == deletedID { createdTaskID = nil }
+    }
+
+    /// Уход активной задачи из папки не раскрывает выполненные и не меняет текущую папку.
+    func selectAfterMovingTask(_ id: UUID, previous: TaskListSnapshot, current: TaskListSnapshot) {
+        guard selectedTaskID == id, !current.taskIDs.contains(id) else { return }
+        let active = previous.activeTasks.contains { $0.id == id }
+        reconcileSelection(previousIDs: (active ? previous.activeTasks : previous.completedTasks).map(\.id),
+                           visibleIDs: (active ? current.activeTasks : current.completedTasks).map(\.id))
     }
 
     /// Если строка исчезла, ищем соседей в прежнем визуальном порядке: сначала ниже, затем выше.

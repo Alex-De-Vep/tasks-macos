@@ -13,7 +13,8 @@ Tasks brings folders, a focused daily list and your system calendar into one nat
 
 ## Features
 
-- **Folders and smart sections:** Inbox, Today, This Week, Month and All Tasks.
+- **Folders:** each task belongs to Inbox, This Week, Month or a custom folder. Today shows starred tasks; All Tasks shows the full library ordered by creation date.
+- **Move tasks:** drag a task onto a sidebar folder, or use “Move to Folder” in its context menu or the toolbar “…” menu. Dropping onto Today adds a star and keeps the original folder.
 - **Daily focus:** star tasks for today without changing their order.
 - **Descriptions and subtasks:** plain text with list continuation, plus a checklist with completion progress.
 - **Deadlines:** choose a date and optionally a time, independently of calendar events. System notifications follow deadline edits and are canceled when a task is completed or deleted.
@@ -27,7 +28,7 @@ Tasks brings folders, a focused daily list and your system calendar into one nat
 
 **macOS 26 or later.** The release is a universal binary for Apple Silicon and Intel.
 
-Current version: **0.1.32**, a preview release. See the [release notes](docs/releases/v0.1.32.md).
+Source version: **0.1.42 (build 43)**, a preview. [All changes since 0.1.32](docs/releases/v0.1.42.md) · [Release history](docs/releases).
 
 Download the DMG from [**Releases**](https://github.com/Alex-De-Vep/tasks-macos/releases), open it, drag **Tasks** into **Applications**, then eject the disk image. Quit the app before replacing an earlier version.
 
@@ -36,6 +37,12 @@ Download the DMG from [**Releases**](https://github.com/Alex-De-Vep/tasks-macos/
 ## Getting started
 
 Press **⌘N** to create a task. Enter its title, then press **Return** to move to the description. Star it for today, add subtasks with the checklist button, or open the calendar using the rightmost toolbar button.
+
+A new task belongs to the open folder. Today creates it in Inbox with a star; All Tasks creates it in Inbox. This Week and Month are permanent folders: date changes do not move tasks. The header counts only active search results. Moving a task preserves its contents, deadlines, notifications and calendar links.
+
+Switching folders clears the open task and collapses completed tasks. Select a task to open it. Creating a task or following a calendar or notification link opens the requested task directly. Deleting the open task clears selection without automatically opening a neighbor.
+
+Click the text or free space in a task row to open it. Star and completion buttons act independently. Titles, descriptions and subtasks remain editable, including in completed tasks.
 
 Calendar access is optional. Once connected, the app uses calendars already configured in macOS. **Schedule time for task** creates an event linked to the selected task.
 

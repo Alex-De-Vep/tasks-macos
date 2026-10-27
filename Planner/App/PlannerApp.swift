@@ -36,6 +36,7 @@ struct PlannerApp: App {
     @State private var preferences = AppPreferences()
     @State private var calendar = CalendarService()
     @State private var notifications = PlannerNotifications()
+    @State private var taskDrag = TaskDragState()
 
     var body: some Scene {
         WindowGroup(preferences.translations["Задачи"], id: "workspace") {
@@ -65,7 +66,7 @@ struct PlannerApp: App {
 
     @ViewBuilder private var workspace: some View {
             if let container = runtime.container, let service = runtime.service {
-                WorkspaceView(service: service, calendar: calendar, preferences: preferences, notifications: notifications)
+                WorkspaceView(service: service, calendar: calendar, preferences: preferences, notifications: notifications, taskDrag: taskDrag)
                     .modifier(NotificationLifecycle(service: service, preferences: preferences, notifications: notifications))
                     .modelContainer(container)
             } else {

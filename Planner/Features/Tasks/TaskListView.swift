@@ -5,6 +5,8 @@ struct TaskListView: View {
     @Environment(\.translations) private var strings
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var selectedID: UUID?
+    @Binding var isCompletedExpanded: Bool
+    let createdTaskID: UUID?
     let search: String
     let filter: TaskFilter
     let snapshot: TaskListSnapshot
@@ -14,13 +16,21 @@ struct TaskListView: View {
     let toggleCompleted: (PlannerTask) -> Void
     let delete: (PlannerTask) -> Void
     let deleteImmediately: (PlannerTask) -> Void
+    let folders: [TaskFolder]
+    let dragScopeID: UUID
+    let move: (PlannerTask, TaskFilter) -> Void
+    let taskDrag: TaskDragState
 
-    @State private var isCompletedExpanded = false
     @State private var displayedScope: Scope?
+    @State private var selectionRevision = 0
+    @State private var activeListAtTop = true
+    @State private var dragSourceID = UUID()
+    @State private var activeNativeFocus = TaskListNativeFocus()
+    @State private var completedNativeFocus = TaskListNativeFocus()
     @FocusState private var focusedList: ListArea?
 
     private enum ListArea: Hashable { case active, completed }
-    private struct Scope: Equatable {
+    private struct Scope: Hashable {
         let filter: TaskFilter
         let search: String
     }
@@ -34,7 +44,7 @@ struct TaskListView: View {
     }
     private var rowAnimation: Animation? {
         // Поиск и переход между папками не должны анимировать каждую строку как удалённую задачу.
-        displayedScope == scope ? PlannerMotion.animation(reduceMotion: reduceMotion) : nil
+        displayedScope == scope ? PlannerMotion.animation(.listChange, reduceMotion: reduceMotion) : nil
     }
     private var tasks: [PlannerTask] { snapshot.tasks }
     private var selectedActiveID: UUID? {
@@ -62,7 +72,22 @@ struct TaskListView: View {
         .background(PlannerStyle.listBackground)
         .animation(rowAnimation, value: rowIDs)
         .onChange(of: scope, initial: true) { _, value in displayedScope = value }
-        // Открытая задача остаётся видимой после выполнения или перехода в другую папку.
+        .onDisappear {
+            taskDrag.finish(sourceViewID: dragSourceID)
+            activeNativeFocus.transitions.detach()
+            completedNativeFocus.transitions.detach()
+        }
+        .onChange(of: rowIDs.active, initial: true) { _, ids in
+            activeNativeFocus.transitions.update(ids: ids, scope: scope, animated: rowAnimation != nil)
+        }
+        .onChange(of: rowIDs.completed, initial: true) { _, ids in
+            completedNativeFocus.transitions.update(ids: ids, scope: scope, animated: rowAnimation != nil)
+        }
+        .onChange(of: scope) {
+            activeNativeFocus.transitions.update(ids: rowIDs.active, scope: scope, animated: false)
+            completedNativeFocus.transitions.update(ids: rowIDs.completed, scope: scope, animated: false)
+        }
+        // Явно открытая задача остаётся видимой после выполнения или перехода по календарной ссылке.
         .task(id: selectedCompletedID) {
             guard let id = selectedCompletedID else { return }
             // SwiftData может временно выбрать выполненную строку во время сохранения удаления.
@@ -90,22 +115,38 @@ struct TaskListView: View {
                 ForEach(snapshot.activeSections) { section in
                     if let title = section.title(using: strings) {
                         Section {
-                            rows(section.tasks)
+                            rows(section.tasks, area: .active)
                         } header: {
                             Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                         }
                     } else {
-                        rows(section.tasks)
+                        rows(section.tasks, area: .active)
                     }
                 }
             }
             .modifier(TaskListAppearance())
+            // Анимация задаётся непосредственно List, который выполняет нативные вставки и удаления строк.
+            .animation(rowAnimation, value: rowIDs.active)
             .focused($focusedList, equals: .active)
             // Delete и Forward Delete действуют только в списке с фокусом, а не в редакторе задачи.
             .onDeleteCommand(perform: deleteSelection(in: snapshot.activeTasks))
             .accessibilityIdentifier("task-list")
-            .onChange(of: selectedActiveID, initial: true) { _, id in
-                if let id { proxy.scrollTo(id) }
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentOffset.y <= 1
+            } action: { _, atTop in
+                activeListAtTop = atTop
+            }
+            .onChange(of: selectedActiveID, initial: true) { previous, id in
+                guard let id else { return }
+                if id == createdTaskID {
+                    // Не прокручиваем уже видимую первую строку во время анимированной вставки.
+                    guard !activeListAtTop else { return }
+                    withAnimation(rowAnimation) { proxy.scrollTo(id, anchor: .top) }
+                } else {
+                    // После удаления сосед занимает освобождённое место без принудительной прокрутки поверх анимации.
+                    if displayedScope == scope, let previous, !rowIDs.active.contains(previous) { return }
+                    proxy.scrollTo(id)
+                }
             }
             // Стрелки продолжают навигацию через границу двух областей списка.
             .onKeyPress(.downArrow) {
@@ -159,13 +200,16 @@ struct TaskListView: View {
         ScrollViewReader { proxy in
             // В список передаются все выполненные задачи текущего фильтра и поиска, без ограничения количества.
             List(selection: selection(in: snapshot.completedTasks, area: .completed)) {
-                rows(snapshot.completedTasks)
+                rows(snapshot.completedTasks, area: .completed)
             }
             .modifier(TaskListAppearance())
             .focused($focusedList, equals: .completed)
+            .animation(rowAnimation, value: rowIDs.completed)
             .onDeleteCommand(perform: deleteSelection(in: snapshot.completedTasks))
             .accessibilityIdentifier("completed-task-list")
-            .onChange(of: selectedCompletedID, initial: true) { _, id in
+            .onDisappear { completedNativeFocus.transitions.detach() }
+            .onChange(of: selectedCompletedID, initial: true) { previous, id in
+                if displayedScope == scope, let previous, !rowIDs.completed.contains(previous) { return }
                 if let id { proxy.scrollTo(id) }
             }
             .onKeyPress(.upArrow) {
@@ -179,18 +223,52 @@ struct TaskListView: View {
     }
 
     @ViewBuilder
-    private func rows(_ tasks: [PlannerTask]) -> some View {
+    private func rows(_ tasks: [PlannerTask], area: ListArea) -> some View {
         ForEach(tasks) { task in
             TaskRow(task: TaskRowContent(task, now: now, strings: strings), now: now, toggleToday: { toggleToday(task) },
-                    toggleCompleted: { toggleCompleted(task) })
+                    toggleCompleted: { toggleCompleted(task) }, select: { selectRow(task.id, area: area) })
                 .tag(task.id)
                 .id(task.id)
-                .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+                // Прежние отступы находятся внутри TaskRow и тоже принимают клик.
+                .listRowInsets(EdgeInsets())
                 .listRowSeparator(.visible, edges: .bottom)
+                .background(TaskRowSelectionSync(taskID: task.id, selectedID: $selectedID, revision: selectionRevision,
+                    isEligible: {
+                        // Уходящая анимированная строка не должна выбирать соседа вместо перемещённой задачи.
+                        guard task.modelContext != nil, !task.isDeleted,
+                              task.isCompleted == (area == .completed) else { return false }
+                        return TaskListSnapshot(tasks: [task], filter: filter, search: search, now: now).taskIDs.contains(task.id)
+                    }, nativeFocus: area == .active ? activeNativeFocus : completedNativeFocus))
+                .onDrag {
+                    // Удалённая модель ещё может участвовать в анимации ухода строки.
+                    guard task.modelContext != nil, !task.isDeleted else { return NSItemProvider() }
+                    let payload = TaskDragPayload(taskID: task.id, scopeID: dragScopeID)
+                    withImmediateNavigationUpdate {
+                        taskDrag.begin(payload: payload, sourceFolder: task.primaryFolder, sourceViewID: dragSourceID)
+                        // Фокус уходит из папок сразу при начале drag, но открытая задача не меняется.
+                        (area == .active ? activeNativeFocus : completedNativeFocus).takeFocus()
+                        focusedList = area
+                    }
+                    return payload.provider()
+                }
                 .contextMenu {
+                    TaskMoveMenu(task: task, folders: folders, move: { move(task, $0) })
                     Button(task.isFocused(on: now) ? strings["Убрать из «Сегодня»"] : strings["На сегодня"]) { toggleToday(task) }
+                    Divider()
                     Button(strings["Удалить задачу…"], role: .destructive) { delete(task) }
                 }
+        }
+    }
+
+    private func selectRow(_ id: UUID, area: ListArea, focusList: Bool = true) {
+        guard taskDrag.context == nil else { return }
+        withImmediateNavigationUpdate {
+            selectedID = id
+            if focusList {
+                focusedList = area
+                // Повторный клик по уже открытой задаче тоже согласует нативное выделение списка.
+                selectionRevision &+= 1
+            }
         }
     }
 
@@ -208,7 +286,15 @@ struct TaskListView: View {
             // Две области используют один выбор. Снятие выделения старым List не сбрасывает новый выбор.
             // Исчезающий при сворачивании список также не должен повторно выбирать свою строку.
             guard area != .completed || isCompletedExpanded else { return }
-            if let id, ids.contains(id) { selectedID = id }
+            // Программное восстановление выбора не должно забирать курсор из редактора.
+            if let id, ids.contains(id) {
+                // AppKit после удаления сам предлагает соседнюю строку. Открываем её только явным кликом
+                // (он приходит из TaskRow) или навигационной клавишей, а не обратной записью List.
+                let event = NSApp.currentEvent
+                let arrow = event?.type == .keyDown && [UInt16(123), 124, 125, 126].contains(event?.keyCode ?? 0)
+                guard selectedID != nil || arrow else { return }
+                selectRow(id, area: area, focusList: false)
+            }
         })
     }
 
@@ -246,7 +332,7 @@ struct TaskRowContent {
         id = task.id
         title = task.displayTitle(using: strings)
         createdAt = task.createdAt
-        folderName = task.folder?.name ?? strings["Входящие"]
+        folderName = task.primaryFolder.title(in: task.folder.map { [$0] } ?? [], using: strings)
         isCompleted = task.isCompleted
         isFocused = task.isFocused(on: now)
         deadline = task.deadline
@@ -260,6 +346,7 @@ private struct TaskRow: View {
     let now: Date
     let toggleToday: () -> Void
     let toggleCompleted: () -> Void
+    let select: () -> Void
 
     private var completionTitle: String {
         strings[task.isCompleted ? "Вернуть в работу" : "Отметить выполненной"]
@@ -286,6 +373,10 @@ private struct TaskRow: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            // Текст и прозрачное пространство до кнопок имеют одну сплошную область открытия.
+            .frame(minHeight: 54, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: select)
             Button(action: toggleCompleted) {
                 Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "checkmark.circle")
                     .contentTransition(.opacity)
@@ -303,8 +394,8 @@ private struct TaskRow: View {
                 Image(systemName: task.isFocused ? "star.fill" : "star")
                     .contentTransition(.opacity)
                     .font(.system(size: 15))
-                    // Цвет звезды отражает отметку «Сегодня» и не зависит от выделения строки.
-                    .foregroundStyle(task.isFocused ? Color.yellow : Color.white)
+                    // Отметка «Сегодня» всегда жёлтая; пустая звезда следует системному цвету выделения строки.
+                    .foregroundStyle(task.isFocused ? Color.yellow : Color.primary)
                     .frame(width: 26, height: 30)
                     .contentShape(Rectangle())
             }
@@ -314,8 +405,15 @@ private struct TaskRow: View {
             .accessibilityValue(strings[task.isFocused ? "Включено" : "Выключено"])
             .accessibilityIdentifier("task-star-\(task.id)")
         }
-        .frame(minHeight: 54)
+        .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
         .padding(.vertical, 4)
+        .padding(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+        .contentShape(Rectangle())
+        // Подложка принимает клики в отступах и промежутках. Она находится под кнопками
+        // и не добавляет им родительский жест, который одновременно открывал бы задачу.
+        .background {
+            Color.clear.contentShape(Rectangle()).onTapGesture(perform: select)
+        }
         .animation(PlannerMotion.animation(.feedback, reduceMotion: reduceMotion), value: task.isFocused)
         .animation(PlannerMotion.animation(.feedback, reduceMotion: reduceMotion), value: task.isCompleted)
         .animation(PlannerMotion.animation(reduceMotion: reduceMotion), value: task.deadline)

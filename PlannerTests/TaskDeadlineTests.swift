@@ -85,6 +85,7 @@ struct TaskDeadlineTests {
         let tasks = (0..<4).map { PlannerTask(title: "Задача \($0)", folder: $0 == 3 ? folder : nil, now: date(20 + $0)) }
         tasks[1].focusDay = LocalDay.key(for: date(26), calendar: calendar())
         tasks[2].planningKind = "week"; tasks[2].planningAnchor = date(26)
+        tasks[2].systemFolderKind = "week"
         tasks[3].planningKind = "month"; tasks[3].planningAnchor = date(26)
         for task in tasks { container.mainContext.insert(task) }
         try container.mainContext.save()
@@ -97,6 +98,7 @@ struct TaskDeadlineTests {
             #expect(after == before)
             #expect(tasks[1].focusDay == "2026-10-26")
             #expect(tasks[2].planningKind == "week" && tasks[2].planningAnchor == date(26))
+            #expect(tasks[2].primaryFolder == .week)
             #expect(tasks[3].folder?.id == folder.id && tasks[3].planningKind == "month")
         }
     }

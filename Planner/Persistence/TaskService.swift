@@ -24,6 +24,8 @@ final class TaskService {
     private let saveContext: (ModelContext) throws -> Void
     var error: PlannerError?
     var notificationChanged: ((UUID, Bool) -> Void)?
+    // Маркер библиотеки защищает от переноса идентификаторов из другого хранилища процесса.
+    let dragScopeID = UUID()
     // Неудачно сохранённый ввод принадлежит задаче и не пропадает при переключении между строками.
     var descriptionDrafts: [UUID: String] = [:]
     var titleDrafts: [UUID: String] = [:]
@@ -50,16 +52,17 @@ final class TaskService {
     }
 
     func createTask(in filter: TaskFilter, folders: [TaskFolder], now: Date = .now) -> PlannerTask? {
-        // Новая задача сразу получает папку или период того раздела, в котором её создали.
+        // Общие представления создают задачу во «Входящих»; «Сегодня» дополнительно ставит звезду.
+        let destination = filter.creationFolder
         let folder: TaskFolder?
-        if case .folder(let id) = filter { folder = folders.first { $0.id == id } }
+        if case .folder(let id) = destination {
+            guard let value = folders.first(where: { $0.id == id && !$0.isDeleted }) else { return nil }
+            folder = value
+        }
         else { folder = nil }
         let task = PlannerTask(folder: folder, now: now)
+        task.systemFolderKind = destination == .week ? "week" : destination == .month ? "month" : "inbox"
         if filter == .today { task.focusDay = LocalDay.key(for: now) }
-        if filter == .week || filter == .month {
-            task.planningKind = filter == .week ? PlanningPeriod.week.rawValue : PlanningPeriod.month.rawValue
-            task.planningAnchor = now
-        }
         return persist { context.insert(task) } ? task : nil
     }
 
@@ -79,6 +82,13 @@ final class TaskService {
             task.focusDay = task.isFocused(on: now, calendar: calendar) ? nil : LocalDay.key(for: now, calendar: calendar)
             task.updatedAt = now
         }
+    }
+
+    @discardableResult
+    func markToday(_ task: PlannerTask, now: Date = .now) -> Bool {
+        guard !task.isDeleted else { return false }
+        guard !task.isFocused(on: now) else { return true }
+        return persist { task.focusDay = LocalDay.key(for: now); task.updatedAt = now }
     }
 
     func description(for task: PlannerTask) -> String { descriptionDrafts[task.id] ?? task.descriptionText }
@@ -181,10 +191,6 @@ final class TaskService {
         }
     }
 
-    func plan(_ task: PlannerTask, for period: PlanningPeriod?, now: Date = .now) {
-        persist { task.planningKind = period?.rawValue; task.planningAnchor = period == nil ? nil : now; task.updatedAt = now }
-    }
-
     @discardableResult
     func setDeadline(_ task: PlannerTask, to deadline: TaskDeadline?, now: Date = .now) -> Bool {
         // Ошибку показывает редактор срока, сохраняя черновик для повторной попытки.
@@ -205,8 +211,24 @@ final class TaskService {
         return saved
     }
 
-    func move(_ task: PlannerTask, to folder: TaskFolder?, now: Date = .now) {
-        persist { task.folder = folder; task.updatedAt = now }
+    @discardableResult
+    func move(_ task: PlannerTask, to destination: TaskFilter, folders: [TaskFolder], now: Date = .now) -> Bool {
+        guard !task.isDeleted, destination.isPrimaryFolder else { return false }
+        let folder: TaskFolder?
+        if case .folder(let id) = destination {
+            guard let value = folders.first(where: { $0.id == id && !$0.isDeleted }) else { return false }
+            folder = value
+        } else { folder = nil }
+        guard task.primaryFolder != destination else { return true }
+        let previous = (task.folder, task.systemFolderKind, task.updatedAt)
+        let saved = persist {
+            task.folder = folder
+            task.systemFolderKind = destination == .week ? "week" : destination == .month ? "month" : "inbox"
+            task.updatedAt = now
+        }
+        // rollback может уведомить SwiftUI позже; сразу возвращаем строке исходную принадлежность.
+        if !saved { (task.folder, task.systemFolderKind, task.updatedAt) = previous }
+        return saved
     }
 
     @discardableResult func delete(_ task: PlannerTask) -> Bool {
@@ -239,7 +261,7 @@ final class TaskService {
     @discardableResult func deleteFolder(_ folder: TaskFolder) -> Bool {
         persist {
             // Перед удалением папки явно переносим её задачи во «Входящие».
-            for task in folder.tasks ?? [] { task.folder = nil }
+            for task in folder.tasks ?? [] { task.folder = nil; task.systemFolderKind = "inbox" }
             context.delete(folder)
         }
     }

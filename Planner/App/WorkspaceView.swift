@@ -4,12 +4,17 @@ import SwiftData
 struct WorkspaceView: View {
     @Environment(\.translations) private var strings
     @Query(sort: \TaskFolder.sortOrder) private var folders: [TaskFolder]
-    @Query(sort: \PlannerTask.createdAt, order: .reverse) private var tasks: [PlannerTask]
+    // SwiftData доставляет результат save отдельным обновлением: анимация нужна самому запросу,
+    // иначе withAnimation вокруг сохранения может не попасть в транзакцию нативного List.
+    @Query(sort: \PlannerTask.createdAt, order: .reverse,
+           animation: .easeInOut(duration: PlannerMotion.Kind.listChange.duration)) private var tasks: [PlannerTask]
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Bindable var service: TaskService
     let calendar: CalendarService
     @Bindable var preferences: AppPreferences
     @Bindable var notifications: PlannerNotifications
+    let taskDrag: TaskDragState
     @Query private var eventLinks: [TaskEventLink]
     @State private var calendarState = CalendarPanelState()
     @State private var editorStore = TaskEditorStore()
@@ -47,6 +52,12 @@ struct WorkspaceView: View {
 
     var body: some View {
         workspaceWithDialogs
+            .transaction { transaction in
+                if reduceMotion {
+                    transaction.animation = nil
+                    transaction.disablesAnimations = true
+                }
+            }
             // В полном экране AppKit рисует фон, верхний отступ панелей и нижнюю границу toolbar.
             .toolbarBackgroundVisibility(isFullScreen ? .visible : .hidden, for: .windowToolbar)
             // Учитываем внешние изменения библиотеки и смену дня, не сбрасывая существующий выбор.
@@ -87,23 +98,29 @@ struct WorkspaceView: View {
             newFolderTitle: strings["Новая папка"],
             toggleSidebarTitle: strings[isSidebarVisible ? "Скрыть папки" : "Показать папки"],
             folderTitle: filter.title(in: folders, using: strings),
-            taskCountTitle: strings.format("Задач: %d", taskList.tasks.count),
+            taskCountTitle: strings.format("Задач: %d", taskList.activeCount),
             newTaskTitle: strings["Новая задача"],
             newChecklistItemTitle: strings["Добавить подзадачу"],
             taskActionsTitle: strings["Действия с задачей"],
             deadlineTitle: strings["Срок задачи"],
             hasSelectedTask: selectedTask != nil,
+            taskListKey: TaskListAnimationKey(filter: filter, search: state.search,
+                active: taskList.activeTasks.map(\.id), completed: taskList.completedTasks.map(\.id)),
             newFolder: newFolder,
             newTask: newTask,
             newChecklistItem: { addChecklistItem(after: nil) }
         ) {
             SidebarView(selection: filterSelection, folders: folders, tasks: tasks, now: now, renameFolder: { folder in
                 editingFolder = folder; showFolderEditor = true
-            }, deleteFolder: { deletingFolder = $0 })
+            }, deleteFolder: { deletingFolder = $0 }, receiveTask: receiveTask, taskDrag: taskDrag)
         } tasks: {
-            TaskListView(selectedID: taskSelection, search: state.search, filter: filter, snapshot: taskList, now: now,
+            TaskListView(selectedID: taskSelection,
+                         isCompletedExpanded: Binding(get: { state.completedTasksExpanded }, set: { state.setCompletedTasksExpanded($0) }),
+                         createdTaskID: state.createdTaskID,
+                         search: state.search, filter: filter, snapshot: taskList, now: now,
                          create: newTask, toggleToday: toggleToday, toggleCompleted: { service.toggleCompleted($0) },
-                         delete: { deletingTask = $0 }, deleteImmediately: deleteTask)
+                         delete: { deletingTask = $0 }, deleteImmediately: deleteTask,
+                         folders: folders, dragScopeID: service.dragScopeID, move: moveTask, taskDrag: taskDrag)
         } detail: {
             if let task = selectedTask {
                 TaskDetailView(task: task, service: service, now: now, focusTitle: task.id == state.createdTaskID,
@@ -116,7 +133,7 @@ struct WorkspaceView: View {
             }
         } taskActions: {
             if let task = selectedTask {
-                TaskActionsMenu(task: task, folders: folders, service: service, delete: { deletingTask = task })
+                TaskActionsMenu(task: task, folders: folders, move: { moveTask(task, to: $0) }, delete: { deletingTask = task })
             }
         } deadline: {
             if let task = selectedTask {
@@ -172,29 +189,53 @@ struct WorkspaceView: View {
 
     private func deleteTask(_ task: PlannerTask) {
         let id = task.id
-        let snapshot = taskList
-        // Сохраняем идентификаторы до удаления модели, отдельно для двух областей списка.
-        let activeIDs = snapshot.activeTasks.map(\.id)
-        let completedIDs = snapshot.completedTasks.map(\.id)
-        withImmediateNavigationUpdate {
-            if service.delete(task) {
+        let previousSelection = state.selectedTaskID
+        // Снимаем выбор до save: SwiftData и AppKit могут предложить соседа прямо во время сохранения.
+        state.selectAfterDeletingTask(id)
+        let deleted = withAnimation(PlannerMotion.animation(.listChange, reduceMotion: reduceMotion)) {
+            service.delete(task)
+        }
+        if deleted {
+            withImmediateNavigationUpdate {
                 editorStore.remove(taskID: id)
-                state.selectAfterDeletingTask(id, previousActiveIDs: activeIDs, previousCompletedIDs: completedIDs)
             }
+        } else if previousSelection == id {
+            // При ошибке модель и её черновик остаются открытыми для повторной попытки.
+            state.selectTask(id)
         }
     }
 
     private func newTask() {
-        withImmediateNavigationUpdate {
-            if let task = service.createTask(in: filter, folders: folders) {
-                state.selectCreatedTask(task.id)
-            }
+        let window = NSApp.keyWindow
+        let previousList = TaskListNativeFocus.prepareForTaskCreation(in: window)
+        let task = withAnimation(PlannerMotion.animation(.listChange, reduceMotion: reduceMotion)) {
+            service.createTask(in: filter, folders: folders)
+        }
+        if let task { state.selectCreatedTask(task.id) }
+        else if let window, let previousList, window.firstResponder === window {
+            // При неудачном сохранении возвращаем прежний фокус, не меняя выбор.
+            window.makeFirstResponder(previousList)
         }
     }
 
     private func selectFilter(_ filter: TaskFilter) {
-        let snapshot = TaskListSnapshot(tasks: tasks, filter: filter, now: now)
-        state.selectFilter(filter, visibleIDs: snapshot.taskIDs)
+        state.selectFilter(filter)
+    }
+
+    private func moveTask(_ task: PlannerTask, to destination: TaskFilter) {
+        let previous = taskList
+        withImmediateNavigationUpdate {
+            if service.move(task, to: destination, folders: folders) {
+                state.selectAfterMovingTask(task.id, previous: previous, current: taskList)
+            }
+        }
+    }
+
+    private func receiveTask(_ payload: TaskDragPayload, to destination: TaskFilter) {
+        guard let id = payload.taskID(in: service.dragScopeID),
+              let task = tasks.first(where: { $0.id == id && !$0.isDeleted }) else { return }
+        if destination == .today { service.markToday(task) }
+        else if destination.isPrimaryFolder { moveTask(task, to: destination) }
     }
 
     private func toggleToday(_ task: PlannerTask) {

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Системные разделы и пользовательские папки используют одинаковые строки и счётчики.
@@ -10,10 +11,21 @@ struct SidebarView: View {
     let now: Date
     let renameFolder: (TaskFolder) -> Void
     let deleteFolder: (TaskFolder) -> Void
+    let receiveTask: (TaskDragPayload, TaskFilter) -> Void
+    let taskDrag: TaskDragState
+    @State private var targetedFolder: TaskFilter?
+
+    // При переносе выбранной остаётся открытая папка: назначение не подменяет selection.
+    private var folderSelection: Binding<TaskFilter?> {
+        Binding(get: { selection }, set: { value in
+            guard taskDrag.context == nil, targetedFolder == nil else { return }
+            withImmediateNavigationUpdate { selection = value }
+        })
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            List(selection: $selection) {
+            List(selection: folderSelection) {
                 Section(strings["Задачи"]) {
                     ForEach(TaskFilter.smartFilters) { filter in
                         row(filter).tag(filter)
@@ -55,25 +67,78 @@ struct SidebarView: View {
             }
             .padding(16)
         }
+        .onChange(of: taskDrag.context?.token) {
+            withImmediateNavigationUpdate { targetedFolder = nil }
+        }
+        .onDisappear { targetedFolder = nil }
     }
 
     private func row(_ filter: TaskFilter) -> some View {
         let count = tasks.filter { !$0.isCompleted && filter.matches($0, now: now) }.count
-        // Семантический цвет становится белым вместе с системным выделением строки.
-        return HStack(spacing: 6) {
-            Label(filter.title(in: folders, using: strings), systemImage: filter.symbol)
+        return SidebarFolderRow(title: filter.title(in: folders, using: strings), symbol: filter.symbol,
+                                count: count, selected: selection == filter,
+                                feedback: targetedFolder == filter ? taskDrag.feedback(for: filter) : .none)
+        .onDrop(of: [.plannerTask], delegate: TaskFolderDropDelegate(destination: filter,
+            targeted: Binding(get: { targetedFolder == filter }, set: { active in
+                if active { targetedFolder = filter }
+                else if targetedFolder == filter { targetedFolder = nil }
+            }), receive: receiveTask, taskDrag: taskDrag))
+    }
+}
+
+/// Оформление читается внутри строки List, где backgroundProminence соответствует её нативному фону.
+private struct SidebarFolderRow: View {
+    let title: String
+    let symbol: String
+    let count: Int
+    let selected: Bool
+    let feedback: TaskDragState.Feedback
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Label(title, systemImage: symbol)
                 .labelStyle(SidebarRowLabelStyle())
                 .lineLimit(1)
+                .foregroundStyle(SidebarFolderForeground(selected: selected, feedback: feedback))
             Spacer(minLength: 4)
             if count > 0 {
-                Text(count.formatted()).font(.caption).monospacedDigit().foregroundStyle(.secondary)
-                    .contentTransition(.numericText(value: Double(count)))
-                    .transition(.opacity)
+                Text(count.formatted()).font(.caption).monospacedDigit()
+                    .foregroundStyle(feedback == .destination
+                        ? AnyShapeStyle(Color.white.opacity(0.8)) : AnyShapeStyle(HierarchicalShapeStyle.secondary))
             }
         }
         .padding(.vertical, 3)
         .foregroundStyle(.primary)
-        .animation(PlannerMotion.animation(.feedback, reduceMotion: reduceMotion), value: count)
+        .contentShape(Rectangle())
+        // listRowBackground занимает всю строку; повторяем боковые отступы нативного выделения sidebar.
+        .listRowBackground(dropBackground.padding(.horizontal, 10))
+        // Фон и содержимое меняют состояние одной транзакцией, без отдельного перехода цвета.
+        .transaction { $0.animation = nil }
+    }
+
+    @ViewBuilder private var dropBackground: some View {
+        if feedback == .destination {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(PlannerStyle.accent)
+        } else if feedback == .sameFolder, !selected {
+            // Из «Сегодня» и «Всех задач» можно навести на владельца, который сейчас не открыт.
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(nsColor: .unemphasizedSelectedContentBackgroundColor))
+        }
+    }
+}
+
+private struct SidebarFolderForeground: ShapeStyle {
+    let selected: Bool
+    let feedback: TaskDragState.Feedback
+
+    func resolve(in environment: EnvironmentValues) -> some ShapeStyle {
+        if feedback == .destination { return AnyShapeStyle(Color.white) }
+        // Не подменяем системный цвет на ещё акцентном фоне уходящей строки.
+        // primary переключается вместе с backgroundProminence, а не с общим фокусом панели.
+        if environment.backgroundProminence == .increased { return AnyShapeStyle(HierarchicalShapeStyle.primary) }
+        return selected || feedback == .sameFolder
+            ? AnyShapeStyle(PlannerStyle.accent) : AnyShapeStyle(HierarchicalShapeStyle.primary)
     }
 }
 

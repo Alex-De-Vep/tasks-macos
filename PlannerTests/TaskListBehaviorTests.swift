@@ -72,7 +72,7 @@ struct TaskListBehaviorTests {
             service.toggleToday(task, now: date(25), calendar: calendar)
         }
         let state = WorkspaceState()
-        state.selectFilter(.today, visibleIDs: snapshot(tasks, filter: .today).taskIDs)
+        state.selectFilter(.today)
         state.selectTask(middle.id)
 
         func unstar(_ task: PlannerTask) {
@@ -100,7 +100,8 @@ struct TaskListBehaviorTests {
         for task in tasks { task.focusDay = LocalDay.key(for: date(25), calendar: calendar) }
         let state = WorkspaceState()
         let previous = snapshot(tasks, filter: .today).taskIDs
-        state.selectFilter(.today, visibleIDs: previous)
+        state.selectFilter(.today)
+        state.selectTask(first.id)
         second.focusDay = nil
         let visible = snapshot(tasks, filter: .today).taskIDs
         state.reconcileSelection(previousIDs: previous, visibleIDs: visible)
@@ -125,7 +126,7 @@ struct TaskListBehaviorTests {
         #expect(after.sections.map(\.id) == before.sections.map(\.id))
     }
 
-    @Test func folderSwitchResetsSearchAndUsesTheFirstVisibleRow() {
+    @Test func folderSwitchResetsSearchSelectionAndCompletedPanel() {
         let folder = TaskFolder(name: "Проект", sortOrder: 0)
         let active = PlannerTask(title: "Активная", folder: folder, now: date(24))
         let completed = PlannerTask(title: "Выполненная", folder: folder, now: date(25))
@@ -134,27 +135,65 @@ struct TaskListBehaviorTests {
         let previouslyCreated = UUID()
         state.selectCreatedTask(previouslyCreated)
         state.updateSearch("поиск", visibleIDs: [previouslyCreated])
+        state.setCompletedTasksExpanded(true)
 
         let target = snapshot([completed, active], filter: .folder(folder.id))
-        state.selectFilter(.folder(folder.id), visibleIDs: target.taskIDs)
+        state.selectFilter(.folder(folder.id))
         #expect(state.filter == .folder(folder.id))
         #expect(state.search.isEmpty)
         #expect(state.createdTaskID == nil)
-        #expect(state.selectedTaskID == active.id)
+        #expect(state.selectedTaskID == nil)
+        #expect(!state.completedTasksExpanded)
         #expect(target.sections.last?.id == "completed")
+        // Позднее согласование списка не выбирает первую строку за пользователя.
+        state.reconcileSelection(previousIDs: [previouslyCreated], visibleIDs: target.taskIDs)
+        #expect(state.selectedTaskID == nil)
     }
 
-    @Test func deletingActiveTasksNeverSelectsCompletedTasks() {
+    @Test func folderWithOnlyCompletedTasksDoesNotOpenATaskEvenWhenReturning() {
+        let folder = TaskFolder(name: "Архив", sortOrder: 0)
+        let completed = PlannerTask(title: "Выполненная", folder: folder, now: date(25))
+        completed.completedAt = date(25)
+        let target = snapshot([completed], filter: .folder(folder.id))
+        let state = WorkspaceState()
+        for _ in 0..<2 {
+            state.selectFilter(.folder(folder.id))
+            state.reconcileSelection(previousIDs: [], visibleIDs: target.taskIDs)
+            #expect(target.activeTasks.isEmpty && target.completedTasks.count == 1)
+            #expect(state.selectedTaskID == nil && !state.completedTasksExpanded)
+            // Ручное раскрытие и открытие выполненной задачи по-прежнему доступны.
+            state.setCompletedTasksExpanded(true)
+            state.selectTask(completed.id)
+            #expect(state.selectedTaskID == completed.id && state.completedTasksExpanded)
+            state.selectFilter(.inbox)
+            #expect(state.selectedTaskID == nil && !state.completedTasksExpanded)
+        }
+        // Календарь и уведомления открывают конкретную задачу явно, в том числе выполненную.
+        state.openLinkedTask(completed, visibleIDs: [])
+        #expect(state.filter == .folder(folder.id) && state.selectedTaskID == completed.id)
+    }
+
+    @Test func selectingCurrentFolderKeepsTheOpenTask() {
+        let state = WorkspaceState(), id = UUID()
+        state.selectTask(id)
+        state.setCompletedTasksExpanded(true)
+        state.selectFilter(.inbox)
+        #expect(state.selectedTaskID == id && state.completedTasksExpanded)
+    }
+
+    @Test func deletingActiveTasksClearsSelectionAndNeverSelectsCompletedTasks() {
         let first = UUID(), middle = UUID(), last = UUID(), completed = UUID()
         let state = WorkspaceState()
         state.selectTask(middle)
-        state.selectAfterDeletingTask(middle, previousActiveIDs: [first, middle, last], previousCompletedIDs: [completed])
-        #expect(state.selectedTaskID == last)
+        state.selectAfterDeletingTask(middle)
+        #expect(state.selectedTaskID == nil)
 
         // У нижней активной строки выбирается предыдущая активная, а не первая выполненная.
-        state.selectAfterDeletingTask(last, previousActiveIDs: [first, last], previousCompletedIDs: [completed])
-        #expect(state.selectedTaskID == first)
-        state.selectAfterDeletingTask(first, previousActiveIDs: [first], previousCompletedIDs: [completed])
+        state.selectTask(last)
+        state.selectAfterDeletingTask(last)
+        #expect(state.selectedTaskID == nil)
+        state.selectTask(first)
+        state.selectAfterDeletingTask(first)
         #expect(state.selectedTaskID == nil)
 
         // Последующее обновление общего списка тоже не должно выбрать скрытую выполненную задачу.
@@ -162,24 +201,33 @@ struct TaskListBehaviorTests {
         #expect(state.selectedTaskID == nil)
     }
 
-    @Test func deletingCompletedTasksKeepsSelectionInCompletedList() {
-        let active = UUID(), first = UUID(), last = UUID()
+    @Test func deletingCompletedTasksClearsSelection() {
+        let first = UUID(), last = UUID()
         let state = WorkspaceState()
         state.selectTask(first)
-        state.selectAfterDeletingTask(first, previousActiveIDs: [active], previousCompletedIDs: [first, last])
-        #expect(state.selectedTaskID == last)
-        state.selectAfterDeletingTask(last, previousActiveIDs: [active], previousCompletedIDs: [last])
+        state.selectAfterDeletingTask(first)
         #expect(state.selectedTaskID == nil)
+        state.selectTask(last)
+        state.selectAfterDeletingTask(last)
+        #expect(state.selectedTaskID == nil)
+    }
+
+    @Test func deletingCreatedTaskClearsItsFocusMarkerAndDoesNotReopenNeighbor() {
+        let state = WorkspaceState(), deleted = UUID(), neighbor = UUID()
+        state.selectCreatedTask(deleted)
+        state.selectAfterDeletingTask(deleted)
+        state.reconcileSelection(previousIDs: [deleted, neighbor], visibleIDs: [neighbor])
+        #expect(state.selectedTaskID == nil && state.createdTaskID == nil)
     }
 
     @Test func deletingUnselectedTaskPreservesCurrentSelection() {
         let active = UUID(), completed = UUID()
         let state = WorkspaceState()
         state.selectTask(active)
-        state.selectAfterDeletingTask(completed, previousActiveIDs: [active], previousCompletedIDs: [completed])
+        state.selectAfterDeletingTask(completed)
         #expect(state.selectedTaskID == active)
         state.selectTask(completed)
-        state.selectAfterDeletingTask(active, previousActiveIDs: [active], previousCompletedIDs: [completed])
+        state.selectAfterDeletingTask(active)
         #expect(state.selectedTaskID == completed)
     }
 

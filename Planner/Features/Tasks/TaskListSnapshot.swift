@@ -4,7 +4,7 @@ import PlannerLocalization
 /// Группа списка имеет постоянный идентификатор, не зависящий от перевода и выделения.
 struct PlannerTaskSection: Identifiable {
     enum Heading {
-        case active, inbox, folder(String), completed
+        case active, inbox, week, month, folder(String), completed
     }
 
     let id: String
@@ -15,6 +15,8 @@ struct PlannerTaskSection: Identifiable {
         switch heading {
         case .active: nil
         case .inbox: strings["Входящие"]
+        case .week: strings["На неделе"]
+        case .month: strings["Месяц"]
         case .folder(let name): name
         case .completed: strings["Выполнено"]
         }
@@ -29,6 +31,7 @@ struct TaskListSnapshot {
     var completedTasks: [PlannerTask] { sections.first { $0.id == "completed" }?.tasks ?? [] }
     var tasks: [PlannerTask] { sections.flatMap(\.tasks) }
     var taskIDs: [UUID] { tasks.map(\.id) }
+    var activeCount: Int { activeTasks.count }
 
     init(tasks: [PlannerTask], filter: TaskFilter, search: String = "", now: Date, calendar: Calendar = .current) {
         // updatedAt остаётся историей изменений, но не участвует ни в сортировке, ни в группировке.
@@ -42,7 +45,7 @@ struct TaskListSnapshot {
 
         let isSingleFolder: Bool
         switch filter {
-        case .inbox, .folder: isSingleFolder = true
+        case .inbox, .week, .month, .folder, .all: isSingleFolder = true
         default: isSingleFolder = false
         }
 
@@ -50,7 +53,11 @@ struct TaskListSnapshot {
             // Внутри папки — непрерывный список без заголовков дней и месяцев создания.
             if isSingleFolder { return ("active", .active, 0) }
             if let folder = task.folder { return ("folder-\(folder.id)", .folder(folder.name), folder.sortOrder) }
-            return ("inbox", .inbox, .min)
+            switch task.primaryFolder {
+            case .week: return ("week", .week, -2)
+            case .month: return ("month", .month, -1)
+            default: return ("inbox", .inbox, .min)
+            }
         }
 
         var orderedGroups: [(id: String, heading: PlannerTaskSection.Heading, order: Int)] = []

@@ -58,8 +58,12 @@ import SwiftData
         }
         for (index, folder) in [project, personal, ideas].enumerated() {
             let task = PlannerTask(title: [text("Обновить портфолио", "Update the portfolio"), text("Запланировать поездку", "Plan a trip"), text("Набросок нового проекта", "Sketch a new project")][index], folder: folder)
-            task.planningKind = index == 0 ? PlanningPeriod.week.rawValue : PlanningPeriod.month.rawValue
-            task.planningAnchor = .now
+            context.insert(task)
+        }
+        for (kind, title) in [("week", text("Подготовить план недели", "Prepare the week plan")),
+                              ("month", text("Подвести итоги месяца", "Review the month"))] {
+            let task = PlannerTask(title: title)
+            task.systemFolderKind = kind
             context.insert(task)
         }
         try context.save()

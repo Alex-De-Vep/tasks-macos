@@ -33,16 +33,25 @@ struct TaskActionButton: View {
     var isCompletion = false
     let action: () -> Void
 
+    private var contentColor: Color {
+        active ? (isCompletion ? Color.green : PlannerStyle.accent) : Color.primary
+    }
+
     var body: some View {
         Button(action: action) {
-            Label(title, systemImage: symbol)
+            Label {
+                Text(title)
+            } icon: {
+                Image(systemName: symbol)
+                    .foregroundStyle(active && !isCompletion ? Color.yellow : contentColor)
+            }
                 .contentTransition(.opacity)
                 .font(.system(size: 14, weight: .medium))
                 .frame(maxWidth: .infinity, minHeight: 50)
                 .contentShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
-        .foregroundStyle(active ? (isCompletion ? Color.green : PlannerStyle.accent) : Color.primary)
+        .foregroundStyle(contentColor)
         .background(active ? (isCompletion ? PlannerStyle.successBackground : PlannerStyle.selection) : PlannerStyle.paper, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.primary.opacity(active ? 0 : 0.12), lineWidth: 0.5))
         .animation(PlannerMotion.animation(.feedback, reduceMotion: reduceMotion), value: active)

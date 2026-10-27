@@ -36,6 +36,11 @@ final class PlannerUITests: XCTestCase {
         let todayRow = app.descendants(matching: .any)["sidebar-today"].firstMatch
         XCTAssertTrue(todayRow.waitForExistence(timeout: 10))
         todayRow.click()
+        // Переход в раздел не раскрывает выполненные и не открывает задачу автоматически.
+        XCTAssertFalse(app.descendants(matching: .any)["task-title-field"].firstMatch.exists)
+        let completedDisclosure = app.buttons["completed-disclosure-button"]
+        XCTAssertTrue(completedDisclosure.waitForExistence(timeout: 3))
+        completedDisclosure.click()
         let savedTitle = app.staticTexts["Проверить сохранение"].firstMatch
         XCTAssertTrue(savedTitle.waitForExistence(timeout: 5))
         savedTitle.click()

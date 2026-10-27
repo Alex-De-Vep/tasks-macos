@@ -1,5 +1,36 @@
 import AppKit
 import SwiftUI
+import Observation
+
+/// Содержимое списка меняется внутри постоянного SwiftUI-корня, а не через замену rootView.
+/// Так нативный List получает транзакцию обновления и сохраняет переходы своих строк.
+@MainActor @Observable
+final class WorkspaceTaskContent {
+    var view = AnyView(EmptyView())
+    @ObservationIgnored private var key: TaskListAnimationKey?
+
+    func update(_ view: AnyView, key: TaskListAnimationKey?, transaction: Transaction, host: NSView) {
+        if let old = self.key, let key, old.filter == key.filter, old.search == key.search, old != key,
+           !transaction.disablesAnimations, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            TaskListTransitions.prepare(in: host)
+        }
+        self.key = key
+        withTransaction(transaction) { self.view = view }
+    }
+}
+
+/// Только идентичность результатов: ввод и смена фокуса не запускают переход всего списка.
+struct TaskListAnimationKey: Equatable {
+    let filter: TaskFilter
+    let search: String
+    let active: [UUID]
+    let completed: [UUID]
+}
+
+struct WorkspaceTaskRoot: View {
+    let content: WorkspaceTaskContent
+    var body: some View { content.view }
+}
 
 /// Нативная оболочка окна: один NSSplitViewController связывает стеклянную панель с NSToolbar.
 struct NativeWorkspaceSplitView<Sidebar: View, Tasks: View, Detail: View, TaskActions: View, Deadline: View, CalendarContent: View>: NSViewControllerRepresentable {
@@ -21,6 +52,7 @@ struct NativeWorkspaceSplitView<Sidebar: View, Tasks: View, Detail: View, TaskAc
     let taskActionsTitle: String
     let deadlineTitle: String
     let hasSelectedTask: Bool
+    let taskListKey: TaskListAnimationKey
     let newFolder: () -> Void
     let newTask: () -> Void
     let newChecklistItem: () -> Void
@@ -54,6 +86,7 @@ struct NativeWorkspaceSplitView<Sidebar: View, Tasks: View, Detail: View, TaskAc
             tasks: AnyView(tasks().environment(\.self, context.environment)),
             detail: AnyView(detail().environment(\.self, context.environment)),
             taskActions: AnyView(taskActions().environment(\.self, context.environment)),
+            transaction: context.transaction, taskListKey: taskListKey,
             isSidebarVisible: isSidebarVisible,
             newFolderTitle: newFolderTitle,
             toggleSidebarTitle: toggleSidebarTitle,
@@ -79,7 +112,8 @@ struct NativeWorkspaceSplitView<Sidebar: View, Tasks: View, Detail: View, TaskAc
 @MainActor
 final class WorkspaceSplitController: NSSplitViewController, NSToolbarDelegate {
     private let sidebarHost = NSHostingController(rootView: AnyView(EmptyView()))
-    private let tasksHost = NSHostingController(rootView: AnyView(EmptyView()))
+    private let taskContent = WorkspaceTaskContent()
+    private lazy var tasksHost = NSHostingController(rootView: WorkspaceTaskRoot(content: taskContent))
     private let detailHost = WorkspaceDocumentController()
     private(set) var sidebarItem: NSSplitViewItem!
     private var tasksItem: NSSplitViewItem!
@@ -255,13 +289,13 @@ final class WorkspaceSplitController: NSSplitViewController, NSToolbarDelegate {
 
     required init?(coder: NSCoder) { nil }
 
-    func update(sidebar: AnyView, tasks: AnyView, detail: AnyView, taskActions: AnyView, isSidebarVisible: Bool,
+    func update(sidebar: AnyView, tasks: AnyView, detail: AnyView, taskActions: AnyView, transaction: Transaction = Transaction(), taskListKey: TaskListAnimationKey? = nil, isSidebarVisible: Bool,
                 newFolderTitle: String, toggleSidebarTitle: String, folderTitle: String, taskCountTitle: String,
                 newTaskTitle: String, newChecklistItemTitle: String, taskActionsTitle: String, hasSelectedTask: Bool,
                 newFolder: @escaping () -> Void, newTask: @escaping () -> Void, newChecklistItem: @escaping () -> Void,
                 sidebarVisibilityChanged: @escaping (Bool) -> Void) {
         sidebarHost.rootView = sidebar
-        tasksHost.rootView = tasks
+        taskContent.update(tasks, key: taskListKey, transaction: transaction, host: tasksHost.view)
         detailHost.updateContent(detail)
         taskActionsHost.rootView = taskActions
         newFolderAction = newFolder

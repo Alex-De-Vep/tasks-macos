@@ -272,11 +272,11 @@ enum PlannerSchemaV4: VersionedSchema {
     }
 }
 
-typealias PlannerTask = PlannerSchemaV4.PlannerTask
-typealias TaskFolder = PlannerSchemaV4.TaskFolder
-typealias LibraryState = PlannerSchemaV4.LibraryState
-typealias TaskEventLink = PlannerSchemaV4.TaskEventLink
-typealias TaskChecklistItem = PlannerSchemaV4.TaskChecklistItem
+typealias PlannerTask = PlannerSchemaV5.PlannerTask
+typealias TaskFolder = PlannerSchemaV5.TaskFolder
+typealias LibraryState = PlannerSchemaV5.LibraryState
+typealias TaskEventLink = PlannerSchemaV5.TaskEventLink
+typealias TaskChecklistItem = PlannerSchemaV5.TaskChecklistItem
 
 extension PlannerTask {
     var orderedChecklistItems: [TaskChecklistItem] {
@@ -288,10 +288,20 @@ extension PlannerTask {
 }
 
 enum PlannerMigrationPlan: SchemaMigrationPlan {
-    static var schemas: [any VersionedSchema.Type] { [PlannerSchemaV1.self, PlannerSchemaV2.self, PlannerSchemaV3.self, PlannerSchemaV4.self] }
+    static var schemas: [any VersionedSchema.Type] { [PlannerSchemaV1.self, PlannerSchemaV2.self, PlannerSchemaV3.self, PlannerSchemaV4.self, PlannerSchemaV5.self] }
     static var stages: [MigrationStage] {
         [.lightweight(fromVersion: PlannerSchemaV1.self, toVersion: PlannerSchemaV2.self),
          .lightweight(fromVersion: PlannerSchemaV2.self, toVersion: PlannerSchemaV3.self),
-         .lightweight(fromVersion: PlannerSchemaV3.self, toVersion: PlannerSchemaV4.self)]
+         .lightweight(fromVersion: PlannerSchemaV3.self, toVersion: PlannerSchemaV4.self),
+         .custom(fromVersion: PlannerSchemaV4.self, toVersion: PlannerSchemaV5.self,
+                 willMigrate: nil, didMigrate: { context in
+                     // Своя папка важнее прежней отметки периода. Даты, идентификаторы и связи не меняем.
+                     for task in try context.fetch(FetchDescriptor<PlannerSchemaV5.PlannerTask>()) {
+                         if task.folder == nil, ["week", "month"].contains(task.planningKind ?? "") {
+                             task.systemFolderKind = task.planningKind!
+                         }
+                     }
+                     try context.save()
+                 })]
     }
 }

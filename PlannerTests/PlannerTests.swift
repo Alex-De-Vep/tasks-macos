@@ -36,17 +36,16 @@ struct PlannerTests {
         #expect(LocalDay.key(for: instant, calendar: calendar) == "1970-01-01")
     }
 
-    @Test func adjacentWeeksAndMonthsDoNotOverlap() {
+    @Test func systemFoldersStayExclusiveAcrossWeeksAndMonths() {
         let task = PlannerTask(now: date(25))
-        task.planningKind = PlanningPeriod.week.rawValue
-        task.planningAnchor = date(25) // Воскресенье: следующий день начинает новую неделю.
-        #expect(TaskFilter.week.matches(task, now: date(25), calendar: calendar))
-        #expect(!TaskFilter.week.matches(task, now: date(26), calendar: calendar))
-        #expect(TaskFilter.month.matches(task, now: date(26), calendar: calendar))
-        task.planningKind = PlanningPeriod.month.rawValue
-        task.planningAnchor = date(31)
-        #expect(!TaskFilter.week.matches(task, now: date(31), calendar: calendar))
-        #expect(!TaskFilter.month.matches(task, now: date(1, month: 11), calendar: calendar))
+        task.systemFolderKind = "week"
+        #expect(TaskFilter.week.matches(task, now: date(26), calendar: calendar))
+        #expect(TaskFilter.week.matches(task, now: date(1, month: 11), calendar: calendar))
+        #expect(!TaskFilter.month.matches(task, now: date(25), calendar: calendar))
+        #expect(!TaskFilter.inbox.matches(task, now: date(25), calendar: calendar))
+        task.systemFolderKind = "month"
+        #expect(TaskFilter.month.matches(task, now: date(1, month: 11), calendar: calendar))
+        #expect(!TaskFilter.week.matches(task, now: date(25), calendar: calendar))
     }
 
     @Test func completionAndStarAreIndependentAndReversible() throws {
@@ -156,7 +155,6 @@ struct PlannerTests {
             service.rename(task, to: "Сохранить первую версию")
             service.toggleToday(task, now: date(25), calendar: calendar)
             service.toggleCompleted(task, now: date(25))
-            service.plan(task, for: .week, now: date(25))
             #expect(service.error == nil)
             return task.id
         }
@@ -168,8 +166,8 @@ struct PlannerTests {
             #expect(task.folder?.name == "Долгий проект")
             #expect(task.isCompleted)
             #expect(task.isFocused(on: date(25), calendar: calendar))
-            #expect(task.planningKind == PlanningPeriod.week.rawValue)
-            #expect(task.planningAnchor == date(25))
+            #expect(task.primaryFolder == .folder(task.folder!.id))
+            #expect(task.planningKind == nil && task.planningAnchor == nil)
         }
     }
 }
