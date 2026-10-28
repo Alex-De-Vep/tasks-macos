@@ -20,6 +20,11 @@ final class TaskEditorFocusUITests: XCTestCase {
         field("task-description-field", in: app).coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.03)).click()
         complete.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
         expect("Включено", in: complete)
+        let disclosure = app.buttons["completed-disclosure-button"]
+        expect("Свернуто", in: disclosure)
+        XCTAssertFalse(field("completed-task-list", in: app).exists)
+        disclosure.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5)).click()
+        expect("Развернуто", in: disclosure)
         let rowCompletion = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "task-complete-")).firstMatch
         expect("Выполнено", in: rowCompletion)
         expect("Начало конец", in: field("task-title-field", in: app))
@@ -28,6 +33,12 @@ final class TaskEditorFocusUITests: XCTestCase {
         expect("Выключено", in: complete)
         expect("Не выполнено", in: rowCompletion)
         expect("Начало конец", in: field("task-description-field", in: app))
+        let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: disclosure)
+        XCTAssertEqual(XCTWaiter.wait(for: [gone], timeout: 3), .completed)
+        complete.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        expect("Включено", in: complete)
+        expect("Свернуто", in: disclosure)
+        XCTAssertFalse(field("completed-task-list", in: app).exists)
     }
 
     func testMiddleTypingAfterLeavingTitleAndDescription() {

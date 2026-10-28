@@ -595,7 +595,7 @@ final class WorkspaceSplitController: NSSplitViewController, NSToolbarDelegate {
         [.plannerNewFolder, .plannerToggleSidebar]
         + (sidebarItem.isCollapsed ? [] : [.sidebarTrackingSeparator])
         + [.plannerFolderHeading, .flexibleSpace, .plannerSearch, .plannerDetailTrackingSeparator,
-         .plannerNewTask, .space, .plannerChecklist, .space, .plannerDeadline, .flexibleSpace, .plannerTaskActions]
+         .plannerNewTask, .space, .plannerChecklist, .space, .plannerDeadline, .space, .plannerTaskActions]
         + calendarToolbarIdentifiers
     }
 
@@ -711,10 +711,11 @@ final class WorkspaceSplitController: NSSplitViewController, NSToolbarDelegate {
     }
 
     private var calendarToolbarIdentifiers: [NSToolbarItem.Identifier] {
+        // Свободное место находится после всех действий задачи во всех режимах календаря.
         switch calendarToolbarLayout {
-        case .closed: [.space, .plannerCalendar]
-        case .column: [.plannerCalendarBoundary, .plannerCalendarHeading, .flexibleSpace, .plannerCalendar, .plannerCalendarTrailingBoundary]
-        case .overlay: [.plannerCalendarHeading, .plannerCalendarGap, .plannerCalendar]
+        case .closed: [.flexibleSpace, .space, .plannerCalendar]
+        case .column: [.flexibleSpace, .plannerCalendarBoundary, .plannerCalendarHeading, .flexibleSpace, .plannerCalendar, .plannerCalendarTrailingBoundary]
+        case .overlay: [.flexibleSpace, .plannerCalendarHeading, .plannerCalendarGap, .plannerCalendar]
         }
     }
 
@@ -792,15 +793,12 @@ final class WorkspaceSplitController: NSSplitViewController, NSToolbarDelegate {
 
     private func updateOverlayToolbarGap() {
         guard calendarToolbarLayout == .overlay, let window = attachedWindow else { return }
-        let anchor: NSView = !taskActionsToolbarItem.isHidden && taskActionsToolbarItem.isVisible ? taskActionsHost
-            : (deadlineToolbarItem.isVisible ? deadlineHost : (checklistToolbarItem.isVisible ? checklistButton : newTaskButton))
-        guard anchor.window === window else { return }
-        let menu = anchor.convert(anchor.bounds, to: nil)
-        let trailingEdge = window.contentView?.bounds.maxX ?? window.frame.width
-        let target = trailingEdge - calendarOverlayWidth - 12
-        let difference = menu.maxX - target
         guard calendarHeading.window === window else { return }
         let heading = calendarHeading.convert(calendarHeading.bounds, to: nil)
+        let trailingEdge = window.contentView?.bounds.maxX ?? window.frame.width
+        // Выравниваем сам заголовок: действия задачи теперь собраны у левого края её колонки.
+        let target = trailingEdge - calendarOverlayWidth + 12
+        let difference = heading.minX - target
         // Учитываем кнопку, её контейнер, интервалы toolbar и внешний отступ окна.
         let availableGap = max(0, trailingEdge - heading.maxX - 96)
         let width = min(availableGap, calendarOverlayWidth, max(0, calendarGap.frame.width + difference))

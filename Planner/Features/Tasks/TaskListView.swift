@@ -86,18 +86,13 @@ struct TaskListView: View {
         .onChange(of: rowIDs.completed, initial: true) { _, ids in
             completedNativeFocus.transitions.update(ids: ids, scope: scope, animated: rowAnimation != nil)
         }
+        .onChange(of: rowIDs.completed.isEmpty) { _, isEmpty in
+            // Исчезнувший пустой раздел при следующем появлении снова свёрнут.
+            if isEmpty { isCompletedExpanded = false }
+        }
         .onChange(of: scope) {
             activeNativeFocus.transitions.update(ids: rowIDs.active, scope: scope, animated: false)
             completedNativeFocus.transitions.update(ids: rowIDs.completed, scope: scope, animated: false)
-        }
-        // Явно открытая задача остаётся видимой после выполнения или перехода по календарной ссылке.
-        .task(id: selectedCompletedID) {
-            guard let id = selectedCompletedID else { return }
-            // SwiftData может временно выбрать выполненную строку во время сохранения удаления.
-            // Раскрываем панель только после согласования окончательного выбора, без задержки данных.
-            await Task.yield()
-            guard !Task.isCancelled, selectedID == id else { return }
-            isCompletedExpanded = true
         }
     }
 
@@ -151,12 +146,12 @@ struct TaskListView: View {
                     proxy.scrollTo(id)
                 }
             }
-            // Стрелки продолжают навигацию через границу двух областей списка.
+            // Стрелки переходят в выполненные только после ручного раскрытия раздела.
             .onKeyPress(.downArrow) {
-                guard selectedID == snapshot.activeTasks.last?.id,
+                guard isCompletedExpanded,
+                      selectedID == snapshot.activeTasks.last?.id,
                       let first = snapshot.completedTasks.first else { return .ignored }
                 withImmediateNavigationUpdate {
-                    isCompletedExpanded = true
                     selectedID = first.id
                     focusedList = .completed
                 }
@@ -196,6 +191,7 @@ struct TaskListView: View {
         }
         .clipped()
         .animation(PlannerMotion.animation(reduceMotion: reduceMotion), value: isCompletedExpanded)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("completed-tasks-panel")
     }
 

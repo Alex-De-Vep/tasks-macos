@@ -28,7 +28,7 @@ Tasks brings folders, a focused daily list and your system calendar into one nat
 
 **macOS 26 or later.** The release is a universal binary for Apple Silicon and Intel.
 
-Source version: **0.1.46 (build 47)**, a preview. [Changes in 0.1.46](docs/releases/v0.1.46.md) · [Changes from 0.1.32 to 0.1.42](docs/releases/v0.1.42.md) · [Release history](docs/releases).
+Source version: **0.1.48 (build 49)**, a preview. [Changes in 0.1.48](docs/releases/v0.1.48.md) · [Changes from 0.1.32 to 0.1.42](docs/releases/v0.1.42.md) · [Release history](docs/releases).
 
 Download the DMG from [**Releases**](https://github.com/Alex-De-Vep/tasks-macos/releases), open it, drag **Tasks** into **Applications**, then eject the disk image. Quit the app before replacing an earlier version.
 

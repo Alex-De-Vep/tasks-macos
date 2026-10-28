@@ -16,9 +16,11 @@ struct TaskActionsMenu: View {
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 17))
+                .foregroundStyle(.primary)
                 .frame(width: WorkspaceToolbarButtonSurface.diameter, height: WorkspaceToolbarButtonSurface.diameter)
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden)
+        .tint(.primary)
         .buttonBorderShape(.circle)
         .frame(width: WorkspaceToolbarButtonSurface.diameter, height: WorkspaceToolbarButtonSurface.diameter)
         .contentShape(Circle())
