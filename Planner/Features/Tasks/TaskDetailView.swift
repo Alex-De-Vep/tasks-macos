@@ -60,7 +60,7 @@ struct TaskDetailView: View {
                             }
                         }
                         if !task.orderedChecklistItems.isEmpty {
-                            TaskChecklistView(task: task, service: service, focusItemID: checklistFocusID, addItem: addChecklistItem)
+                            TaskChecklistView(task: task, service: service, editorStore: editorStore, focusItemID: checklistFocusID, addItem: addChecklistItem)
                                 .id(task.id.uuidString + ".checklist")
                                 .transition(.opacity)
                         }

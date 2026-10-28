@@ -5,6 +5,116 @@ import Testing
 /// Повторное подключение документа не меняет ввод, Undo и обработчики действующей карточки.
 @MainActor
 struct TaskEditorAttachmentTests {
+    @Test(arguments: [true, false])
+    func leavingMainEditorCollapsesSelectionAndPreservesCaretAndUndo(isTitle: Bool) {
+        let store = TaskEditorStore(), taskID = UUID()
+        let editor = store.view(taskID: taskID, title: isTitle)
+        let host = TaskEditorHost(editor: editor)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 240),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { host.detachEditor(); window.close() }
+        host.frame = NSRect(x: 0, y: 100, width: 480, height: 120)
+        window.contentView?.addSubview(host)
+        let other = NSTextView(frame: NSRect(x: 0, y: 0, width: 480, height: 60))
+        window.contentView?.addSubview(other)
+        host.layoutSubtreeIfNeeded()
+        #expect(window.makeFirstResponder(editor))
+        editor.string = "Начало конец"
+        let undo = editor.undoManager!
+        undo.groupsByEvent = false
+        undo.beginUndoGrouping()
+        editor.insertText("т", replacementRange: NSRange(location: 7, length: 0))
+        undo.endUndoGrouping()
+        editor.setSelectedRange(NSRange(location: 7, length: 1))
+
+        #expect(window.makeFirstResponder(other))
+        #expect(window.firstResponder === other)
+        #expect(editor.selectedRange() == NSRange(location: 8, length: 0))
+        #expect(editor.string == "Начало тконец" && editor.undoManager === undo && undo.canUndo)
+
+        #expect(window.makeFirstResponder(editor))
+        editor.setSelectedRange(NSRange(location: 3, length: 0))
+        #expect(window.makeFirstResponder(other))
+        #expect(editor.selectedRange() == NSRange(location: 3, length: 0))
+        #expect(window.makeFirstResponder(editor))
+        undo.undo()
+        #expect(editor.string == "Начало конец")
+        undo.redo()
+        #expect(editor.string == "Начало тконец")
+    }
+
+    @Test(arguments: [true, false])
+    func detachingFocusedMainEditorCollapsesSelectionThroughFocusLoss(isTitle: Bool) {
+        let store = TaskEditorStore(), taskID = UUID()
+        let editor = store.view(taskID: taskID, title: isTitle)
+        let host = TaskEditorHost(editor: editor)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 200),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = host
+        #expect(window.makeFirstResponder(editor))
+        editor.string = "Начало конец"
+        editor.setSelectedRange(NSRange(location: 2, length: 5))
+        let undo = editor.undoManager
+        host.detachEditor()
+        let reopened = TaskEditorHost(editor: store.view(taskID: taskID, title: isTitle))
+        #expect(reopened.editor === editor && reopened.ownsEditor)
+        #expect(editor.selectedRange() == NSRange(location: 7, length: 0))
+        #expect(editor.string == "Начало конец" && editor.undoManager === undo)
+    }
+
+    @Test func detachingAnUnfocusedEditorDoesNotResetItsStoredSelection() {
+        let store = TaskEditorStore(), taskID = UUID()
+        let editor = store.view(taskID: taskID, title: false)
+        let host = TaskEditorHost(editor: editor)
+        editor.string = "Начало конец"
+        editor.setSelectedRange(NSRange(location: 2, length: 5))
+        host.detachEditor()
+        #expect(editor.selectedRange() == NSRange(location: 2, length: 5))
+    }
+
+    @Test func checklistEditorsKeepTheirSelectionWhenReattached() {
+        let store = TaskEditorStore(), taskID = UUID(), firstID = UUID(), secondID = UUID()
+        let editor = store.checklistView(taskID: taskID, itemID: firstID)
+        let first = TaskEditorHost(editor: editor)
+        editor.string = "Начало конец"
+        editor.setSelectedRange(NSRange(location: 7, length: 2))
+        let other = store.checklistView(taskID: taskID, itemID: secondID)
+        other.string = "Другой пункт"
+        let second = TaskEditorHost(editor: store.checklistView(taskID: taskID, itemID: firstID))
+        first.detachEditor()
+        #expect(second.ownsEditor && second.editor === editor && editor.isChecklist)
+        #expect(editor.selectedRange() == NSRange(location: 7, length: 2))
+        #expect(other !== editor && other.string == "Другой пункт")
+        #expect(editor.accessibilityIdentifier() == "checklist-title-\(firstID)")
+    }
+
+    @Test func removingCachedChecklistEditorsDoesNotAffectAnotherTask() {
+        let store = TaskEditorStore(), taskID = UUID(), otherTaskID = UUID(), itemID = UUID()
+        let editor = store.checklistView(taskID: taskID, itemID: itemID)
+        let other = store.checklistView(taskID: otherTaskID, itemID: itemID)
+        store.removeChecklistItem(taskID: taskID, itemID: itemID)
+        let replacement = store.checklistView(taskID: taskID, itemID: itemID)
+        #expect(replacement !== editor)
+        store.remove(taskID: taskID)
+        #expect(store.checklistView(taskID: taskID, itemID: itemID) !== replacement)
+        #expect(store.checklistView(taskID: otherTaskID, itemID: itemID) === other)
+    }
+
+    @Test func checklistMeasurementWrapsWithoutChangingTextOrSelection() {
+        let editor = TaskEditorStore().checklistView(taskID: UUID(), itemID: UUID())
+        editor.string = String(repeating: "Длинная подзадача с переносом текста. ", count: 5)
+        let text = editor.string
+        let selected = NSRange(location: 12, length: 5)
+        editor.setSelectedRange(selected)
+        let narrow = editor.fittingSize(width: 140, minimumHeight: 20)
+        let wide = editor.fittingSize(width: 450, minimumHeight: 20)
+        #expect(narrow.height > wide.height && wide.height > 20)
+        #expect(editor.string == text && editor.selectedRange() == selected)
+    }
+
     @Test func cachedEditorMovesToOneHostAndOldTeardownCannotDisconnectIt() {
         let store = TaskEditorStore(), taskID = UUID()
         let editor = store.view(taskID: taskID, title: false)

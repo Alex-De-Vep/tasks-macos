@@ -25,13 +25,26 @@ enum PlainTextLists {
     }
 }
 
-/// Каждый документ имеет собственные текстовые представления и UndoManager. Переключение задач их не очищает.
+/// Каждый документ сохраняет собственные редакторы, позиции ввода и UndoManager между переключениями.
 @MainActor
 final class TaskEditorStore {
     private var views: [String: TaskTextView] = [:]
     func view(taskID: UUID, title: Bool) -> TaskTextView {
         let key = taskID.uuidString + (title ? ".title" : ".description")
         if let view = views[key] { return view }
+        let view = makeView(title: title, identifier: title ? "task-title-field" : "task-description-field")
+        views[key] = view
+        return view
+    }
+    func checklistView(taskID: UUID, itemID: UUID) -> TaskTextView {
+        let key = taskID.uuidString + ".checklist." + itemID.uuidString
+        if let view = views[key] { return view }
+        let view = makeView(title: false, identifier: "checklist-title-\(itemID)")
+        view.isChecklist = true
+        views[key] = view
+        return view
+    }
+    private func makeView(title: Bool, identifier: String) -> TaskTextView {
         let view = TaskTextView(frame: .zero)
         view.isEditable = true
         view.isSelectable = true
@@ -52,13 +65,14 @@ final class TaskEditorStore {
         view.textContainer?.containerSize.height = .greatestFiniteMagnitude
         view.font = .systemFont(ofSize: title ? 22 : 14, weight: title ? .semibold : .regular)
         view.textColor = .labelColor
-        view.setAccessibilityIdentifier(title ? "task-title-field" : "task-description-field")
-        views[key] = view
+        view.setAccessibilityIdentifier(identifier)
         return view
     }
+    func removeChecklistItem(taskID: UUID, itemID: UUID) {
+        views[taskID.uuidString + ".checklist." + itemID.uuidString] = nil
+    }
     func remove(taskID: UUID) {
-        views[taskID.uuidString + ".title"] = nil
-        views[taskID.uuidString + ".description"] = nil
+        for key in views.keys.filter({ $0.hasPrefix(taskID.uuidString + ".") }) { views[key] = nil }
     }
 }
 
@@ -140,7 +154,8 @@ final class TaskEditorHost: NSView {
         self.editor = editor
         super.init(frame: .zero)
         setAccessibilityElement(false)
-        editor.editorHost?.detachEditor()
+        // Переподключение того же документа не является уходом пользователя из поля.
+        editor.editorHost?.detachEditor(preservingSelection: true)
         editor.editorHost = self
         editor.isEditable = true
         editor.isSelectable = true
@@ -154,9 +169,11 @@ final class TaskEditorHost: NSView {
     }
     required init?(coder: NSCoder) { nil }
 
-    func detachEditor() {
+    func detachEditor(preservingSelection: Bool = false) {
         // Демонтаж старого контейнера не отключает редактор, уже переданный новому.
         guard ownsEditor else { return }
+        editor.preservesSelectionDuringTransfer = preservingSelection
+        defer { editor.preservesSelectionDuringTransfer = false }
         editor.cancelRequestedFocus()
         editor.delegate = nil
         editor.submit = {}
@@ -172,15 +189,43 @@ final class TaskEditorHost: NSView {
 final class TaskTextView: NSTextView {
     weak var editorHost: TaskEditorHost?
     var isTitle = false
+    var isChecklist = false
     var placeholder = ""
     var submit: () -> Void = {}
     var toggleCompleted: () -> Void = {}
     var focusRequested = false
     var focusConsumed: () -> Void = {}
     private var focusGeneration = 0
+    fileprivate var preservesSelectionDuringTransfer = false
     private let documentUndo = UndoManager()
     override var undoManager: UndoManager? { documentUndo }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned, !isChecklist, !preservesSelectionDuringTransfer {
+            collapseSelectionOnFocusLoss()
+            needsDisplay = true
+            // NSWindow назначает нового firstResponder после возврата из этого метода.
+            // Обновляем мигающий курсор уже после перехода, если редактор не получил фокус снова.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.window?.firstResponder !== self else { return }
+                self.updateInsertionPointStateAndRestartTimer(false)
+                self.needsDisplay = true
+            }
+        }
+        return resigned
+    }
+
+    /// Снимаем подсветку, оставляя точку ввода у конца выделенного фрагмента, а не в конце документа.
+    /// Обновление текста и передача редактора новому host не вызывают этот сброс.
+    private func collapseSelectionOnFocusLoss() {
+        guard !isChecklist, !preservesSelectionDuringTransfer else { return }
+        let range = selectedRange()
+        guard range.location != NSNotFound, range.length > 0 else { return }
+        let location = min(NSMaxRange(range), (string as NSString).length)
+        setSelectedRange(NSRange(location: location, length: 0), affinity: selectionAffinity, stillSelecting: false)
+    }
 
     override func mouseDown(with event: NSEvent) {
         // Пользовательский клик важнее ранее запланированного автоматического фокуса.
@@ -238,10 +283,25 @@ final class TaskTextView: NSTextView {
         }
     }
     override func insertNewline(_ sender: Any?) {
+        if isChecklist {
+            let modifiers = NSApp.currentEvent?.modifierFlags ?? []
+            if modifiers.contains(.shift) || modifiers.contains(.option) {
+                insertText("\n", replacementRange: selectedRange())
+            } else { submit() }
+            return
+        }
         if isTitle { submit(); return }
         let change = PlainTextLists.newline(in: string, selection: selectedRange(), shift: NSApp.currentEvent?.modifierFlags.contains(.shift) == true)
         // insertText использует штатный механизм выделения, уведомлений и отмены NSTextView.
         insertText(change.text, replacementRange: change.range)
+    }
+    override func insertTab(_ sender: Any?) {
+        if isChecklist { window?.selectNextKeyView(sender) }
+        else { super.insertTab(sender) }
+    }
+    override func insertBacktab(_ sender: Any?) {
+        if isChecklist { window?.selectPreviousKeyView(sender) }
+        else { super.insertBacktab(sender) }
     }
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.keyCode == 36, event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command) {

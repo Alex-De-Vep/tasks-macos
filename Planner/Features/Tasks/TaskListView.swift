@@ -58,13 +58,16 @@ struct TaskListView: View {
         GeometryReader { geometry in
             ZStack {
                 VStack(spacing: 0) {
-                    // List сохраняет свою идентичность и анимирует даже удаление последней строки.
+                    // Внутри папки List сохраняет идентичность и анимирует даже удаление последней строки.
                     activeList.frame(maxHeight: .infinity)
                     if !snapshot.completedTasks.isEmpty {
                         completedPanel(availableHeight: geometry.size.height)
                             .transition(.opacity)
                     }
                 }
+                // Новая папка получает свою область прокрутки с начала, включая первый заголовок группы.
+                // Изменения задач и звёздочек в открытой папке не пересоздают списки.
+                .id(filter)
                 if tasks.isEmpty { emptyState.transition(.opacity) }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

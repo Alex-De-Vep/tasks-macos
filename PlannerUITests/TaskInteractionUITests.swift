@@ -69,7 +69,7 @@ final class TaskInteractionUITests: XCTestCase {
         createTask("Сохранённая задача", in: app)
         replace(field("task-description-field", in: app), with: "Описание\nВторая строка")
         app.buttons["add-checklist-item-button"].click()
-        let item = app.textFields.matching(NSPredicate(format: "identifier BEGINSWITH %@", "checklist-title-")).firstMatch
+        let item = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "checklist-title-")).firstMatch
         XCTAssertTrue(item.waitForExistence(timeout: 3))
         replace(item, with: "Первый пункт")
         createTask("Другая задача", in: app)
@@ -88,7 +88,7 @@ final class TaskInteractionUITests: XCTestCase {
         app.buttons["complete-task-button"].click()
         replace(field("task-title-field", in: app), with: "Изменённая выполненная")
         replace(field("task-description-field", in: app), with: "Описание выполненной")
-        replace(app.textFields.matching(NSPredicate(format: "identifier BEGINSWITH %@", "checklist-title-")).firstMatch,
+        replace(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "checklist-title-")).firstMatch,
                 with: "Обновлённый пункт")
         app.terminate()
         app.launch()
@@ -99,7 +99,7 @@ final class TaskInteractionUITests: XCTestCase {
         disclosure.click()
         row("Изменённая выполненная", in: app).click()
         assertValue("Описание выполненной", of: field("task-description-field", in: app))
-        assertValue("Обновлённый пункт", of: app.textFields.matching(NSPredicate(format: "identifier BEGINSWITH %@", "checklist-title-")).firstMatch)
+        assertValue("Обновлённый пункт", of: app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "checklist-title-")).firstMatch)
         replace(field("task-title-field", in: app), with: "Снова доступна для ввода")
     }
 

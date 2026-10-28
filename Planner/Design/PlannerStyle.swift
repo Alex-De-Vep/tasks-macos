@@ -50,10 +50,12 @@ struct TaskActionButton: View {
                 .frame(maxWidth: .infinity, minHeight: 50)
                 .contentShape(RoundedRectangle(cornerRadius: 10))
         }
-        .buttonStyle(.plain)
+        // Нативная кнопка принимает нажатие также при активном текстовом редакторе задачи.
+        .buttonStyle(.borderless)
         .foregroundStyle(contentColor)
         .background(active ? (isCompletion ? PlannerStyle.successBackground : PlannerStyle.selection) : PlannerStyle.paper, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.primary.opacity(active ? 0 : 0.12), lineWidth: 0.5))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.primary.opacity(active ? 0 : 0.12), lineWidth: 0.5)
+            .allowsHitTesting(false))
         .animation(PlannerMotion.animation(.feedback, reduceMotion: reduceMotion), value: active)
         .accessibilityValue(active ? strings["Включено"] : strings["Выключено"])
     }
